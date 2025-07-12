@@ -1,0 +1,4 @@
+port: 7676
+listenAddress: 0.0.0.0
+workingDirectory: /opt/deployer
+hostKeyPath: /opt/deployer/host_rsa_key

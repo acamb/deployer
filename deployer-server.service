@@ -1,0 +1,11 @@
+[Unit]
+Description=Deployer Server
+After=network.target
+
+[Service]
+ExecStart=/usr/bin/deployer-server -config /opt/deployer/config.yaml
+Restart=always
+User=deployer-server
+
+[Install]
+WantedBy=multi-user.target

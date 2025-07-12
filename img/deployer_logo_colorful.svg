@@ -1,0 +1,49 @@
+<svg width="120" height="120" viewBox="0 0 120 120" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <!-- Gradiente per la lettera D -->
+    <linearGradient id="gradientD" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" style="stop-color:#3498db;stop-opacity:1" />
+      <stop offset="100%" style="stop-color:#2980b9;stop-opacity:1" />
+    </linearGradient>
+    
+    <!-- Gradiente per i container -->
+    <linearGradient id="gradientContainer1" x1="0%" y1="0%" x2="100%" y2="0%">
+      <stop offset="0%" style="stop-color:#27ae60;stop-opacity:1" />
+      <stop offset="100%" style="stop-color:#2ecc71;stop-opacity:1" />
+    </linearGradient>
+    
+    <linearGradient id="gradientContainer2" x1="0%" y1="0%" x2="100%" y2="0%">
+      <stop offset="0%" style="stop-color:#f39c12;stop-opacity:1" />
+      <stop offset="100%" style="stop-color:#e67e22;stop-opacity:1" />
+    </linearGradient>
+    
+    <linearGradient id="gradientContainer3" x1="0%" y1="0%" x2="100%" y2="0%">
+      <stop offset="0%" style="stop-color:#e74c3c;stop-opacity:1" />
+      <stop offset="100%" style="stop-color:#c0392b;stop-opacity:1" />
+    </linearGradient>
+  </defs>
+  
+  <!-- Lettera D esterna -->
+  <path d="M30 25 L30 95 L55 95 C75 95 85 85 85 60 C85 35 75 25 55 25 Z" fill="url(#gradientD)"/>
+  
+  <!-- Lettera D interna (negativo) -->
+  <path d="M40 35 L40 85 L52 85 C65 85 72 78 72 60 C72 42 65 35 52 35 Z" fill="#ffffff"/>
+  
+  <!-- Container Docker (blocchi colorati) -->
+  <rect x="45" y="45" width="14" height="7" rx="1.5" fill="url(#gradientContainer1)"/>
+  <rect x="45" y="56" width="14" height="7" rx="1.5" fill="url(#gradientContainer2)"/>
+  <rect x="45" y="67" width="14" height="7" rx="1.5" fill="url(#gradientContainer3)"/>
+  
+  <!-- Freccia deployment -->
+  <path d="M75 35 L85 40 L75 45 M70 40 L85 40" stroke="#e74c3c" stroke-width="2.5" fill="none" stroke-linecap="round" stroke-linejoin="round"/>
+  
+  <!-- Indicatori SSH (punti di connessione) -->
+  <circle cx="90" cy="30" r="2.5" fill="#27ae60"/>
+  <circle cx="90" cy="40" r="2.5" fill="#27ae60"/>
+  <circle cx="90" cy="50" r="2.5" fill="#27ae60"/>
+  
+  <!-- Effetto glow sui punti SSH -->
+  <circle cx="90" cy="30" r="2.5" fill="#27ae60" opacity="0.3"/>
+  <circle cx="90" cy="40" r="2.5" fill="#27ae60" opacity="0.3"/>
+  <circle cx="90" cy="50" r="2.5" fill="#27ae60" opacity="0.3"/>
+</svg>

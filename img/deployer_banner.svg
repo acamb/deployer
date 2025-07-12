@@ -1,0 +1,74 @@
+<svg width="400" height="120" viewBox="0 0 400 120" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <!-- Gradiente per la lettera D -->
+    <linearGradient id="bannerGradientD" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" style="stop-color:#3498db;stop-opacity:1" />
+      <stop offset="100%" style="stop-color:#2980b9;stop-opacity:1" />
+    </linearGradient>
+    
+    <!-- Gradienti per i container -->
+    <linearGradient id="bannerContainer1" x1="0%" y1="0%" x2="100%" y2="0%">
+      <stop offset="0%" style="stop-color:#27ae60;stop-opacity:1" />
+      <stop offset="100%" style="stop-color:#2ecc71;stop-opacity:1" />
+    </linearGradient>
+    
+    <linearGradient id="bannerContainer2" x1="0%" y1="0%" x2="100%" y2="0%">
+      <stop offset="0%" style="stop-color:#f39c12;stop-opacity:1" />
+      <stop offset="100%" style="stop-color:#e67e22;stop-opacity:1" />
+    </linearGradient>
+    
+    <linearGradient id="bannerContainer3" x1="0%" y1="0%" x2="100%" y2="0%">
+      <stop offset="0%" style="stop-color:#e74c3c;stop-opacity:1" />
+      <stop offset="100%" style="stop-color:#c0392b;stop-opacity:1" />
+    </linearGradient>
+    
+    <!-- Gradiente per il testo -->
+    <linearGradient id="textGradient" x1="0%" y1="0%" x2="100%" y2="0%">
+      <stop offset="0%" style="stop-color:#2c3e50;stop-opacity:1" />
+      <stop offset="100%" style="stop-color:#34495e;stop-opacity:1" />
+    </linearGradient>
+  </defs>
+  
+  <!-- Sfondo sottile -->
+  <rect width="400" height="120" fill="#f8f9fa" rx="10"/>
+  
+  <!-- Logo principale -->
+  <g transform="translate(20, 10)">
+    <!-- Lettera D esterna -->
+    <path d="M10 15 L10 85 L35 85 C55 85 65 75 65 50 C65 25 55 15 35 15 Z" fill="url(#bannerGradientD)"/>
+    
+    <!-- Lettera D interna (negativo) -->
+    <path d="M20 25 L20 75 L32 75 C45 75 52 68 52 50 C52 32 45 25 32 25 Z" fill="#ffffff"/>
+    
+    <!-- Container Docker -->
+    <rect x="25" y="35" width="14" height="7" rx="1.5" fill="url(#bannerContainer1)"/>
+    <rect x="25" y="46" width="14" height="7" rx="1.5" fill="url(#bannerContainer2)"/>
+    <rect x="25" y="57" width="14" height="7" rx="1.5" fill="url(#bannerContainer3)"/>
+    
+    <!-- Freccia deployment -->
+    <path d="M55 25 L65 30 L55 35 M50 30 L65 30" stroke="#e74c3c" stroke-width="2.5" fill="none" stroke-linecap="round" stroke-linejoin="round"/>
+    
+    <!-- Indicatori SSH -->
+    <circle cx="70" cy="20" r="2.5" fill="#27ae60"/>
+    <circle cx="70" cy="30" r="2.5" fill="#27ae60"/>
+    <circle cx="70" cy="40" r="2.5" fill="#27ae60"/>
+  </g>
+  
+  <!-- Testo DEPLOYER -->
+  <text x="120" y="55" font-family="Arial, sans-serif" font-size="36" font-weight="bold" fill="url(#textGradient)">DEPLOYER</text>
+  
+  <!-- Sottotitolo -->
+  <text x="120" y="80" font-family="Arial, sans-serif" font-size="16" fill="#7f8c8d">Secure SSH-based Docker deployment for homelabs</text>
+  
+  <!-- Decorazione: piccoli container alla fine -->
+  <g transform="translate(350, 30)">
+    <rect x="0" y="0" width="12" height="8" rx="1" fill="#3498db" opacity="0.6"/>
+    <rect x="0" y="12" width="12" height="8" rx="1" fill="#27ae60" opacity="0.6"/>
+    <rect x="0" y="24" width="12" height="8" rx="1" fill="#e74c3c" opacity="0.6"/>
+    
+    <rect x="16" y="6" width="12" height="8" rx="1" fill="#f39c12" opacity="0.6"/>
+    <rect x="16" y="18" width="12" height="8" rx="1" fill="#9b59b6" opacity="0.6"/>
+    
+    <rect x="32" y="12" width="12" height="8" rx="1" fill="#1abc9c" opacity="0.6"/>
+  </g>
+</svg>

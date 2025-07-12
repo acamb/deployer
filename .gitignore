@@ -1,0 +1,9 @@
+.idea/
+client/config.yaml
+/bin/
+*.deb
+pkg/
+pkg-client/
+pkg-rpm/
+pkg-client-rpm/
+/server/config.yaml
