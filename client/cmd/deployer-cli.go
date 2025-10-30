@@ -4,9 +4,10 @@ import (
 	"deployer/builder"
 	"deployer/client"
 	"deployer/client/config"
-	"github.com/spf13/cobra"
 	"log"
 	"os"
+
+	"github.com/spf13/cobra"
 )
 
 func main() {
@@ -25,10 +26,6 @@ func main() {
 			configuration, err = config.ReadConfiguration(filePath)
 			if err != nil {
 				log.Fatalf("Error reading configuration: %v", err)
-			}
-			err := client.Connect(*configuration)
-			if err != nil {
-				log.Fatalf("Error connecting to remote server: %v", err)
 			}
 		}
 	}
@@ -80,6 +77,7 @@ func main() {
 		Use:   "start",
 		Short: "Start the remote container",
 		Run: func(cmd *cobra.Command, args []string) {
+			Connect(configuration)
 			log.Default().Println("Starting remote container...")
 			if err := client.StartContainer(configuration.Name); err != nil {
 				log.Fatalf("Error starting container: %v", err)
@@ -94,6 +92,7 @@ func main() {
 		Use:   "stop",
 		Short: "Stop the remote container",
 		Run: func(cmd *cobra.Command, args []string) {
+			Connect(configuration)
 			log.Default().Println("Stopping remote container...")
 			if err := client.StopContainer(configuration.Name); err != nil {
 				log.Fatalf("Error stopping container: %v", err)
@@ -108,6 +107,7 @@ func main() {
 		Use:   "restart",
 		Short: "Restart the remote container",
 		Run: func(cmd *cobra.Command, args []string) {
+			Connect(configuration)
 			log.Default().Println("Restarting remote container...")
 			if err := client.RestartContainer(configuration.Name); err != nil {
 				log.Fatalf("Error restarting container: %v", err)
@@ -122,6 +122,7 @@ func main() {
 		Use:   "deploy",
 		Short: "Deploy and starts the remote container",
 		Run: func(cmd *cobra.Command, args []string) {
+			Connect(configuration)
 			if err := DeployImage(configuration); err != nil {
 				log.Fatalf("Error deploying container: %v", err)
 			} else {
@@ -135,6 +136,7 @@ func main() {
 		Use:   "logs",
 		Short: "Prints the logs of the remote container",
 		Run: func(cmd *cobra.Command, args []string) {
+			Connect(configuration)
 			channel, err := client.Logs(configuration.Name)
 			if err != nil {
 				log.Fatalf("Error reading logs for container: %v", err)
@@ -155,6 +157,13 @@ func main() {
 	})
 	if err := rootCmd.Execute(); err != nil {
 		log.Fatalf("Error executing command: %v", err)
+	}
+}
+
+func Connect(configuration *config.Configuration) {
+	err := client.Connect(*configuration)
+	if err != nil {
+		log.Fatalf("Error connecting to remote server: %v", err)
 	}
 }
 
