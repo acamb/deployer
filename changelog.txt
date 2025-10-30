@@ -1,2 +1,2 @@
-1.0.1 2025/10/30:
+0.1.1 2025/10/30:
     Commands that don't require a remote connection are now possible even if the remote is not available.
