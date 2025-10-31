@@ -10,7 +10,6 @@ import (
 	"errors"
 	"flag"
 	"fmt"
-	"golang.org/x/crypto/ssh"
 	"log"
 	"net"
 	"os"
@@ -19,17 +18,23 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"golang.org/x/crypto/ssh"
 )
 
 var config *serverConfig.ServerConfiguration
 
 func main() {
+	version := flag.Bool("v", false, "Prints the version of the program")
 	configFilePath := flag.String("config", "config.yaml", "Path to configuration file")
 	sampleConfig := flag.Bool("sample-config", false, "Generate a sample configuration file")
 	flag.Parse()
 	var err error
 	var listener net.Listener
-
+	if *version {
+		log.Printf("Deployer Server Version: %s", Version)
+		return
+	}
 	if *sampleConfig {
 		if err := serverConfig.CreateSampleConfig(*configFilePath); err != nil {
 			log.Fatalf("Error generating sample configuration: %v", err)

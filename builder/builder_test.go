@@ -124,7 +124,7 @@ CMD cat /test.txt`
 	}
 
 	// This will only pass if Docker is running
-	err = BuildImage(configuration)
+	err = BuildImageWithDocker(configuration)
 	if err != nil {
 		t.Logf("Docker not available or build failed: %v", err)
 		t.Skip("Skipping Docker integration test")

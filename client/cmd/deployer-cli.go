@@ -4,10 +4,9 @@ import (
 	"deployer/builder"
 	"deployer/client"
 	"deployer/client/config"
+	"github.com/spf13/cobra"
 	"log"
 	"os"
-
-	"github.com/spf13/cobra"
 )
 
 func main() {
@@ -15,8 +14,9 @@ func main() {
 	var configuration *config.Configuration
 	var err error
 	rootCmd := &cobra.Command{
-		Use:   "deployer-client",
-		Short: "deploy client",
+		Use:     "deployer-client",
+		Version: Version,
+		Short:   "deployer client",
 	}
 
 	rootCmd.PersistentFlags().StringVarP(&filePath, "file", "f", "", "configuration file path")
@@ -34,13 +34,7 @@ func main() {
 		Use:   "config",
 		Short: "Generate a sample configuration file",
 		Run: func(cmd *cobra.Command, args []string) {
-			sampleConfig := &config.Configuration{
-				Host:      "localhost",
-				Port:      7676,
-				Name:      "default",
-				ImageName: "myapp",
-			}
-			err := config.WriteSampleConfiguration(sampleConfig)
+			err := config.WriteSampleConfiguration()
 			if err != nil {
 				log.Fatalf("Error generating sample configuration: %v", err)
 			}
@@ -170,22 +164,17 @@ func Connect(configuration *config.Configuration) {
 func DeployImage(configuration *config.Configuration) error {
 
 	var outputFile *os.File
-	//check if dockerfile exists
-	if _, err := os.Stat("Dockerfile"); os.IsNotExist(err) {
-		log.Println("Dockerfile not found, using only compose.yml...")
-	} else {
-		log.Default().Println("Building docker image...")
-		if err := builder.BuildImage(configuration); err != nil {
-			return err
-		}
-		log.Default().Println("Preparing docker image transfer...")
-		outputFile, err = builder.SaveImageToFile(configuration)
-		if err != nil {
-			return err
-		}
+
+	if err := builder.BuildImage(configuration); err != nil {
+		return err
+	}
+	log.Default().Println("Preparing docker image transfer...")
+	outputFile, err := builder.SaveImageToFile(configuration)
+	if err != nil {
+		return err
 	}
 
-	composeFile, err := os.Open("compose.yml")
+	composeFile, err := os.Open(configuration.ComposePath)
 	if err != nil {
 		return err
 	}

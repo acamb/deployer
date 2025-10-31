@@ -12,15 +12,15 @@ all: server client
 
 server:
 	mkdir -p $(BINDIR)
-	go build -o $(BINDIR)/deployer-server_$(VERSION) server/deployer-server.go
+	go build -ldflags "-X 'main.Version=$(VERSION)'" -o $(BINDIR)/deployer-server_$(VERSION) ./server
 
 client:
 	mkdir -p $(BINDIR)
-	go build -o $(BINDIR)/deployer-client_$(VERSION) client/cmd/deployer-cli.go
+	go build -ldflags "-X 'main.Version=$(VERSION)'" -o $(BINDIR)/deployer-client_$(VERSION) ./client/cmd
 
 client-windows:
 	mkdir -p $(BINDIR)
-	GOOS=windows GOARCH=amd64 go build -o $(BINDIR)/deployer-client_$(VERSION).exe client/cmd/deployer-cli.go
+	GOOS=windows GOARCH=amd64 go build -ldflags "-X 'main.Version=$(VERSION)'" -o $(BINDIR)/deployer-client_$(VERSION).exe ./client/cmd
 
 clean:
 	rm -rf $(BINDIR) $(PKGDIR) $(DEBNAME) $(DEBNAME_CLIENT) $(RPMNAME) $(RPMNAME_CLIENT)
@@ -165,5 +165,6 @@ release: server client client-windows docker-server-deb docker-client-deb docker
 
 check:
 	cd client && go test -v ./... && cd ..
+	cd client/config && go test -v ./... && cd ../..
 	cd server && go test -v ./... && cd ..
 	cd protocol && go test -v ./... && cd ..

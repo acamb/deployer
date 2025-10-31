@@ -4,12 +4,15 @@ import (
 	"context"
 	"deployer/client/config"
 	"encoding/json"
-	"github.com/docker/docker/api/types/build"
-	"github.com/docker/docker/client"
-	"github.com/moby/go-archive"
+	"errors"
 	"io"
 	"log"
 	"os"
+	"os/exec"
+
+	"github.com/docker/docker/api/types/build"
+	"github.com/docker/docker/client"
+	"github.com/moby/go-archive"
 )
 
 var dockerClient *client.Client
@@ -29,6 +32,43 @@ func GetClient(ctx context.Context) (*client.Client, error) {
 }
 
 func BuildImage(configuration *config.Configuration) error {
+	buildMethod := configuration.BuildMethod
+	if configuration.BuildMethod == "" {
+		if _, err := os.Stat("Dockerfile"); os.IsNotExist(err) {
+			log.Println("Dockerfile not found, using only compose.yml...")
+			buildMethod = config.Compose
+		} else {
+			log.Default().Println("Building docker image...")
+			buildMethod = config.Docker
+		}
+	}
+	switch buildMethod {
+	case config.Docker:
+		return BuildImageWithDocker(configuration)
+	case config.Compose:
+		return BuildImageWithCompose(configuration)
+	default:
+		return errors.New("unknown build method: " + string(buildMethod))
+	}
+}
+
+func BuildImageWithCompose(configuration *config.Configuration) error {
+	args := []string{"compose"}
+	if configuration.ComposePath != "" {
+		args = append(args, "-f"+configuration.ComposePath)
+	}
+	args = append(args, "build")
+	cmd := exec.Command("docker", args...)
+	cmd.Stdout = os.Stdout
+	cmd.Stderr = os.Stderr
+	err := cmd.Run()
+	if err != nil {
+		return errors.New("Error building container: " + err.Error())
+	}
+	return nil
+}
+
+func BuildImageWithDocker(configuration *config.Configuration) error {
 	ctx := context.Background()
 	cli, err := GetClient(ctx)
 	if err != nil {
