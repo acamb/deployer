@@ -10,6 +10,7 @@ import (
 	"errors"
 	"flag"
 	"fmt"
+	"io"
 	"log"
 	"net"
 	"os"
@@ -125,14 +126,20 @@ func handleConnection(conn net.Conn, sshConfig *ssh.ServerConfig) {
 			return
 		}
 	} else if request.Command == protocol.Deploy {
-		tarFile, composeFile, err := receiveTarAndComposeFile(request)
-		if err != nil {
-			_ = handleResponse(fmt.Sprintf("Error receiving tar file: %v", err), protocol.Ko, encoder)
+		composeFile := string(request.ComposeFile)
+		var tarFile *os.File
+		if request.TarSize > 0 {
+			tarFile, err = receiveStreamedTar(dataChannel, request.Name, request.TarSize)
+			if err != nil {
+				_ = handleResponse(fmt.Sprintf("Error receiving tar file: %v", err), protocol.Ko, encoder)
+				log.Printf("Error saving files for deployment: %v", err)
+				return
+			}
+			defer os.Remove(tarFile.Name())
+		} else {
+			_ = handleResponse(fmt.Sprintf("No tar file supplied"), protocol.Ko, encoder)
 			log.Printf("Error saving files for deployment: %v", err)
 			return
-		}
-		if tarFile != nil {
-			defer os.Remove(tarFile.Name())
 		}
 
 		if err := os.Mkdir(config.WorkingDirectory+"/"+request.Name, 0770); err != nil && !os.IsExist(err) {
@@ -266,23 +273,29 @@ func saveComposeFile(name string, fileContent string) error {
 	return nil
 }
 
-func receiveTarAndComposeFile(req protocol.Request) (*os.File, string, error) {
-	var tarFile *os.File
-	if req.TarImage != nil {
-		var err error
-		tarFile, err = os.Create(config.WorkingDirectory + "/" + req.Name + ".tar")
-		if err != nil {
-			return nil, "", errors.New("Error creating temporary tar file: " + err.Error())
-		}
-		defer tarFile.Close()
-
-		if _, err := tarFile.Write(req.TarImage); err != nil {
-			return nil, "", errors.New("Error writing to temporary tar file: " + err.Error())
-		}
+func receiveStreamedTar(dataChannel ssh.Channel, name string, tarSize int64) (*os.File, error) {
+	tarFilePath := filepath.Join(config.WorkingDirectory, name+".tar")
+	tarFile, err := os.Create(tarFilePath)
+	if err != nil {
+		return nil, fmt.Errorf("error creating tar file: %v", err)
 	}
 
-	composeFile := string(req.ComposeFile)
-	return tarFile, composeFile, nil
+	// Copia i dati dal canale direttamente al file
+	_, err = io.CopyN(tarFile, dataChannel, tarSize)
+	if err != nil {
+		tarFile.Close()
+		os.Remove(tarFilePath)
+		return nil, fmt.Errorf("error writing tar file: %v", err)
+	}
+
+	// Riposiziona il puntatore del file all'inizio
+	if _, err := tarFile.Seek(0, 0); err != nil {
+		tarFile.Close()
+		os.Remove(tarFilePath)
+		return nil, fmt.Errorf("error seeking tar file: %v", err)
+	}
+
+	return tarFile, nil
 }
 
 func stopContainer(name string) error {

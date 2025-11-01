@@ -70,7 +70,7 @@ func TestRequestGobEncoding(t *testing.T) {
 	original := Request{
 		Command:     Deploy,
 		Name:        "test-container",
-		TarImage:    []byte("fake tar data"),
+		TarSize:     int64(len("fake tar data")),
 		ComposeFile: []byte("version: '3'\nservices:\n  test:\n    image: nginx"),
 	}
 
@@ -89,7 +89,7 @@ func TestRequestGobEncoding(t *testing.T) {
 	// Verify
 	assert.Equal(t, original.Command, decoded.Command)
 	assert.Equal(t, original.Name, decoded.Name)
-	assert.Equal(t, original.TarImage, decoded.TarImage)
+	assert.Equal(t, original.TarSize, decoded.TarSize)
 	assert.Equal(t, original.ComposeFile, decoded.ComposeFile)
 }
 
@@ -116,39 +116,6 @@ func TestResponseGobEncoding(t *testing.T) {
 	assert.Equal(t, original.Message, decoded.Message)
 }
 
-func TestLargeDataGobEncoding(t *testing.T) {
-	// Test with large binary data
-	largeData := make([]byte, 1024*1024) // 1MB
-	for i := range largeData {
-		largeData[i] = byte(i % 256)
-	}
-
-	original := Request{
-		Command:     Deploy,
-		Name:        "large-container",
-		TarImage:    largeData,
-		ComposeFile: []byte("version: '3'\nservices:\n  test:\n    image: nginx"),
-	}
-
-	// Encode
-	var buf bytes.Buffer
-	encoder := gob.NewEncoder(&buf)
-	err := encoder.Encode(&original)
-	require.NoError(t, err)
-
-	// Decode
-	var decoded Request
-	decoder := gob.NewDecoder(&buf)
-	err = decoder.Decode(&decoded)
-	require.NoError(t, err)
-
-	// Verify
-	assert.Equal(t, original.Command, decoded.Command)
-	assert.Equal(t, original.Name, decoded.Name)
-	assert.Equal(t, original.TarImage, decoded.TarImage)
-	assert.Equal(t, original.ComposeFile, decoded.ComposeFile)
-}
-
 func TestEmptyRequestGobEncoding(t *testing.T) {
 	original := Request{}
 
@@ -167,13 +134,13 @@ func TestEmptyRequestGobEncoding(t *testing.T) {
 	// Verify
 	assert.Equal(t, original.Command, decoded.Command)
 	assert.Equal(t, original.Name, decoded.Name)
-	assert.Equal(t, original.TarImage, decoded.TarImage)
+	assert.Equal(t, original.TarSize, decoded.TarSize)
 	assert.Equal(t, original.ComposeFile, decoded.ComposeFile)
 }
 
 func TestMultipleRequestsGobEncoding(t *testing.T) {
 	requests := []Request{
-		{Command: Deploy, Name: "container1", TarImage: []byte("data1")},
+		{Command: Deploy, Name: "container1", TarSize: int64(len("fake tar data"))},
 		{Command: Start, Name: "container2"},
 		{Command: Stop, Name: "container3"},
 		{Command: Restart, Name: "container4"},
@@ -204,7 +171,7 @@ func TestMultipleRequestsGobEncoding(t *testing.T) {
 	for i, original := range requests {
 		assert.Equal(t, original.Command, decoded[i].Command)
 		assert.Equal(t, original.Name, decoded[i].Name)
-		assert.Equal(t, original.TarImage, decoded[i].TarImage)
+		assert.Equal(t, original.TarSize, decoded[i].TarSize)
 		assert.Equal(t, original.ComposeFile, decoded[i].ComposeFile)
 	}
 }
@@ -219,7 +186,7 @@ func TestRequestResponseSequence(t *testing.T) {
 	request := Request{
 		Command:     Deploy,
 		Name:        "test-app",
-		TarImage:    []byte("docker image data"),
+		TarSize:     int64(len("fake tar data")),
 		ComposeFile: []byte("version: '3'\nservices:\n  app:\n    image: test-app"),
 	}
 
@@ -253,7 +220,7 @@ func BenchmarkRequestGobEncoding(b *testing.B) {
 	request := Request{
 		Command:     Deploy,
 		Name:        "benchmark-container",
-		TarImage:    make([]byte, 1024), // 1KB
+		TarSize:     int64(len("fake tar data")),
 		ComposeFile: []byte("version: '3'\nservices:\n  test:\n    image: nginx"),
 	}
 
@@ -277,25 +244,6 @@ func BenchmarkResponseGobEncoding(b *testing.B) {
 		var buf bytes.Buffer
 		encoder := gob.NewEncoder(&buf)
 		err := encoder.Encode(&response)
-		require.NoError(b, err)
-	}
-}
-
-func BenchmarkLargeRequestGobEncoding(b *testing.B) {
-	// Test with larger data (1MB)
-	largeData := make([]byte, 1024*1024)
-	request := Request{
-		Command:     Deploy,
-		Name:        "large-container",
-		TarImage:    largeData,
-		ComposeFile: []byte("version: '3'\nservices:\n  test:\n    image: nginx"),
-	}
-
-	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
-		var buf bytes.Buffer
-		encoder := gob.NewEncoder(&buf)
-		err := encoder.Encode(&request)
 		require.NoError(b, err)
 	}
 }

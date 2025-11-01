@@ -48,7 +48,7 @@ func (s Status) String() string {
 type Request struct {
 	Command     Command
 	Name        string
-	TarImage    []byte
+	TarSize     int64
 	ComposeFile []byte
 }
 

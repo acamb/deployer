@@ -9,13 +9,15 @@ import (
 	"encoding/gob"
 	"errors"
 	"fmt"
-	"golang.org/x/crypto/ssh"
+	"io"
 	"log"
 	"net"
 	"os"
 	"path/filepath"
 	"strconv"
 	"strings"
+
+	"golang.org/x/crypto/ssh"
 )
 
 var sshConn *ssh.Client
@@ -120,7 +122,7 @@ func handleRequest(name string, req protocol.Command, tarFile *os.File, composeF
 		if err != nil {
 			return err
 		}
-		request.TarImage = tarData
+		request.TarSize = int64(len(tarData))
 	}
 
 	if composeFile != nil {
@@ -134,6 +136,7 @@ func handleRequest(name string, req protocol.Command, tarFile *os.File, composeF
 	if err = encoder.Encode(&request); err != nil {
 		return err
 	}
+	_, err = io.Copy(dataChannel, tarFile)
 	var response protocol.Response
 	if err = decoder.Decode(&response); err != nil {
 		return err

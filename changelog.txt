@@ -1,2 +1,6 @@
 0.1.1 2025/10/30:
     Commands that don't require a remote connection are now possible even if the remote is not available.
+0.2.0 2025/10/31:
+    Support for custom compose.yaml and version support
+0.3.0 2025/11/01:
+    Avoid keeping tar image in memory while loading from remote

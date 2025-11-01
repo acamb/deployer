@@ -596,87 +596,86 @@ func TestSaveComposeFile(t *testing.T) {
 	}
 }
 
-func TestReceiveTarAndComposeFile(t *testing.T) {
+func TestReceiveStreamedTar(t *testing.T) {
 	setupTestEnvironment(t)
 
 	testCases := []struct {
-		name         string
-		request      protocol.Request
-		expectError  bool
-		errorMessage string
-		checkTarFile bool
+		name          string
+		tarData       []byte
+		tarSize       int64
+		containerName string
+		expectError   bool
+		errorMessage  string
 	}{
 		{
-			name: "Valid request with tar and compose",
-			request: protocol.Request{
-				Name:        "test-app",
-				TarImage:    []byte("fake tar content"),
-				ComposeFile: []byte("version: '3'\\nservices:\\n  web:\\n    image: test"),
-			},
-			expectError:  false,
-			checkTarFile: true,
+			name:          "Valid tar data",
+			tarData:       []byte("fake tar content"),
+			tarSize:       int64(len("fake tar content")),
+			containerName: "test-app",
+			expectError:   false,
 		},
 		{
-			name: "Request with only compose file",
-			request: protocol.Request{
-				Name:        "compose-only",
-				TarImage:    nil,
-				ComposeFile: []byte("version: '3'"),
-			},
-			expectError:  false,
-			checkTarFile: false,
+			name:          "Empty tar data",
+			tarData:       []byte{},
+			tarSize:       0,
+			containerName: "empty-tar",
+			expectError:   false,
 		},
 		{
-			name: "Empty tar content",
-			request: protocol.Request{
-				Name:        "empty-tar",
-				TarImage:    []byte{},
-				ComposeFile: []byte("version: '3'"),
-			},
-			expectError:  false,
-			checkTarFile: true,
+			name:          "Large tar file",
+			tarData:       bytes.Repeat([]byte("X"), 10000),
+			tarSize:       10000,
+			containerName: "large-tar",
+			expectError:   false,
 		},
 		{
-			name: "Large tar file",
-			request: protocol.Request{
-				Name:        "large-tar",
-				TarImage:    bytes.Repeat([]byte("X"), 10000),
-				ComposeFile: []byte("version: '3'"),
-			},
-			expectError:  false,
-			checkTarFile: true,
+			name:          "Size mismatch - smaller than expected",
+			tarData:       []byte("small"),
+			tarSize:       100, // Larger than actual data
+			containerName: "size-mismatch",
+			expectError:   true,
+			errorMessage:  "error writing tar file",
 		},
 	}
 
 	for _, tc := range testCases {
 		t.Run(tc.name, func(t *testing.T) {
-			tarFile, composeContent, err := receiveTarAndComposeFile(tc.request)
+			// Create a mock SSH channel with the tar data
+			mockChannel := &MockSSHChannel{
+				Buffer: bytes.NewBuffer(tc.tarData),
+				closed: false,
+			}
+
+			tarFile, err := receiveStreamedTar(mockChannel, tc.containerName, tc.tarSize)
 
 			if tc.expectError {
 				assert.Error(t, err)
 				if tc.errorMessage != "" {
 					assert.Contains(t, err.Error(), tc.errorMessage)
 				}
+				assert.Nil(t, tarFile)
 			} else {
 				assert.NoError(t, err)
-				assert.Equal(t, string(tc.request.ComposeFile), composeContent)
+				require.NotNil(t, tarFile) // Use require per fermare il test se nil
 
-				if tc.checkTarFile && tc.request.TarImage != nil && len(tc.request.TarImage) > 0 {
-					assert.NotNil(t, tarFile)
+				// Verify the file was created
+				assert.FileExists(t, tarFile.Name())
 
-					// Verify tar file content
-					tarContent, readErr := os.ReadFile(tarFile.Name())
+				// Verify the content if we have data
+				if len(tc.tarData) > 0 {
+					// Reset file pointer to beginning
+					_, seekErr := tarFile.Seek(0, 0)
+					assert.NoError(t, seekErr)
+
+					// Read and verify content
+					savedContent, readErr := io.ReadAll(tarFile)
 					assert.NoError(t, readErr)
-					assert.Equal(t, tc.request.TarImage, tarContent)
-
-					// Clean up
-					tarFile.Close()
-					os.Remove(tarFile.Name())
-				} else {
-					if tc.request.TarImage == nil {
-						assert.Nil(t, tarFile)
-					}
+					assert.Equal(t, tc.tarData, savedContent)
 				}
+
+				// Clean up
+				tarFile.Close()
+				os.Remove(tarFile.Name())
 			}
 		})
 	}
@@ -723,6 +722,63 @@ func TestStopContainer(t *testing.T) {
 			} else {
 				assert.NoError(t, err)
 			}
+		})
+	}
+}
+
+func TestProtocolRequestStructure(t *testing.T) {
+	testCases := []struct {
+		name    string
+		request protocol.Request
+	}{
+		{
+			name: "Valid deploy request",
+			request: protocol.Request{
+				Command:     protocol.Deploy,
+				Name:        "test-app",
+				TarSize:     1024,
+				ComposeFile: []byte("version: '3'\nservices:\n  web:\n    image: nginx"),
+			},
+		},
+		{
+			name: "Request with only compose file",
+			request: protocol.Request{
+				Command:     protocol.Start,
+				Name:        "compose-only",
+				TarSize:     0,
+				ComposeFile: []byte("version: '3'"),
+			},
+		},
+		{
+			name: "Empty request",
+			request: protocol.Request{
+				Command:     protocol.Stop,
+				Name:        "empty-app",
+				TarSize:     0,
+				ComposeFile: nil,
+			},
+		},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			var buffer bytes.Buffer
+			encoder := gob.NewEncoder(&buffer)
+			decoder := gob.NewDecoder(&buffer)
+
+			// Encode the request
+			err := encoder.Encode(&tc.request)
+			assert.NoError(t, err)
+
+			// Decode and verify
+			var decoded protocol.Request
+			err = decoder.Decode(&decoded)
+			assert.NoError(t, err)
+
+			assert.Equal(t, tc.request.Command, decoded.Command)
+			assert.Equal(t, tc.request.Name, decoded.Name)
+			assert.Equal(t, tc.request.TarSize, decoded.TarSize)
+			assert.Equal(t, tc.request.ComposeFile, decoded.ComposeFile)
 		})
 	}
 }
