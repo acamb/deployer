@@ -68,11 +68,11 @@ func RestartContainer(name string) error {
 	return handleSimpleRequest(name, protocol.Restart)
 }
 
-func DeployImage(name string, tarFile *os.File, composeFile *os.File) error {
+func DeployImage(name string, tarFilePath string, composeFile *os.File) error {
 	return handleRequest(
 		name,
 		protocol.Deploy,
-		tarFile,
+		tarFilePath,
 		composeFile)
 }
 
@@ -107,22 +107,23 @@ func Logs(name string) (<-chan string, error) {
 }
 
 func handleSimpleRequest(name string, req protocol.Command) error {
-	return handleRequest(name, req, nil, nil)
+	return handleRequest(name, req, "", nil)
 }
 
-func handleRequest(name string, req protocol.Command, tarFile *os.File, composeFile *os.File) error {
+func handleRequest(name string, req protocol.Command, tarFilePath string, composeFile *os.File) error {
 	var err error
+	tarFile, err := os.Open(tarFilePath)
 	request := protocol.Request{
 		Name:    name,
 		Command: req,
 	}
 
 	if tarFile != nil {
-		tarData, err := os.ReadFile(tarFile.Name())
+		fileInfo, err := tarFile.Stat()
 		if err != nil {
 			return err
 		}
-		request.TarSize = int64(len(tarData))
+		request.TarSize = fileInfo.Size()
 	}
 
 	if composeFile != nil {
@@ -136,7 +137,15 @@ func handleRequest(name string, req protocol.Command, tarFile *os.File, composeF
 	if err = encoder.Encode(&request); err != nil {
 		return err
 	}
-	_, err = io.Copy(dataChannel, tarFile)
+	if tarFile != nil {
+		if _, err := tarFile.Seek(0, 0); err != nil {
+			return fmt.Errorf("error seeking tar file: %v", err)
+		}
+		_, err = io.Copy(dataChannel, tarFile)
+		if err != nil {
+			return fmt.Errorf("error sending tar file: %v", err)
+		}
+	}
 	var response protocol.Response
 	if err = decoder.Decode(&response); err != nil {
 		return err

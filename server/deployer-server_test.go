@@ -646,36 +646,33 @@ func TestReceiveStreamedTar(t *testing.T) {
 				closed: false,
 			}
 
-			tarFile, err := receiveStreamedTar(mockChannel, tc.containerName, tc.tarSize)
+			tarFileName, err := receiveStreamedTar(mockChannel, tc.containerName, tc.tarSize)
 
 			if tc.expectError {
 				assert.Error(t, err)
 				if tc.errorMessage != "" {
 					assert.Contains(t, err.Error(), tc.errorMessage)
 				}
-				assert.Nil(t, tarFile)
+				assert.Equal(t, tarFileName, "")
 			} else {
 				assert.NoError(t, err)
-				require.NotNil(t, tarFile) // Use require per fermare il test se nil
+				require.NotNil(t, tarFileName)
 
 				// Verify the file was created
-				assert.FileExists(t, tarFile.Name())
+				assert.FileExists(t, tarFileName)
 
 				// Verify the content if we have data
 				if len(tc.tarData) > 0 {
-					// Reset file pointer to beginning
-					_, seekErr := tarFile.Seek(0, 0)
-					assert.NoError(t, seekErr)
-
 					// Read and verify content
+					tarFile, err := os.Open(tarFileName)
+					defer tarFile.Close()
+					assert.NoError(t, err)
 					savedContent, readErr := io.ReadAll(tarFile)
 					assert.NoError(t, readErr)
 					assert.Equal(t, tc.tarData, savedContent)
 				}
 
-				// Clean up
-				tarFile.Close()
-				os.Remove(tarFile.Name())
+				os.Remove(tarFileName)
 			}
 		})
 	}

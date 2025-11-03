@@ -4,9 +4,10 @@ import (
 	"deployer/builder"
 	"deployer/client"
 	"deployer/client/config"
-	"github.com/spf13/cobra"
 	"log"
 	"os"
+
+	"github.com/spf13/cobra"
 )
 
 func main() {
@@ -62,7 +63,7 @@ func main() {
 			if err != nil {
 				log.Fatalf("Error saving image to file: %v", err)
 			} else {
-				log.Printf("Docker image saved to file: %s", file.Name())
+				log.Printf("Docker image saved to file: %s", file)
 			}
 		},
 	})
@@ -162,8 +163,6 @@ func Connect(configuration *config.Configuration) {
 }
 
 func DeployImage(configuration *config.Configuration) error {
-
-	var outputFile *os.File
 
 	if err := builder.BuildImage(configuration); err != nil {
 		return err

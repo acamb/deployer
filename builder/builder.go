@@ -107,30 +107,29 @@ func BuildImageWithDocker(configuration *config.Configuration) error {
 	return nil
 }
 
-func SaveImageToFile(configuration *config.Configuration) (*os.File, error) {
+func SaveImageToFile(configuration *config.Configuration) (string, error) {
 	ctx := context.Background()
 	cli, err := GetClient(ctx)
 	if err != nil {
-		return nil, err
+		return "", err
 	}
 
 	outputFile, err := os.Create(configuration.Name + ".tar")
 	if err != nil {
-		return nil, err
+		return "", err
 	}
 	defer outputFile.Close()
-
 	responseBody, err := cli.ImageSave(ctx, []string{configuration.ImageName})
 	if err != nil {
-		return nil, err
+		return "", err
 	}
 	defer responseBody.Close()
 
 	_, err = io.Copy(outputFile, responseBody)
 	if err != nil {
-		return nil, err
+		return "", err
 	}
-	return outputFile, nil
+	return outputFile.Name(), nil
 }
 
 func ImportImageFromFile(filePath string) error {

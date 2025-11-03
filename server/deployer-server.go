@@ -127,29 +127,31 @@ func handleConnection(conn net.Conn, sshConfig *ssh.ServerConfig) {
 		}
 	} else if request.Command == protocol.Deploy {
 		composeFile := string(request.ComposeFile)
-		var tarFile *os.File
+		tarFilePath := ""
 		if request.TarSize > 0 {
-			tarFile, err = receiveStreamedTar(dataChannel, request.Name, request.TarSize)
+			fmt.Println("Receiving tar file of size", request.TarSize)
+			tarFilePath, err = receiveStreamedTar(dataChannel, request.Name, request.TarSize)
+			defer os.Remove(tarFilePath)
 			if err != nil {
-				_ = handleResponse(fmt.Sprintf("Error receiving tar file: %v", err), protocol.Ko, encoder)
 				log.Printf("Error saving files for deployment: %v", err)
+				_ = handleResponse(fmt.Sprintf("Error receiving tar file: %v", err), protocol.Ko, encoder)
 				return
 			}
-			defer os.Remove(tarFile.Name())
 		} else {
-			_ = handleResponse(fmt.Sprintf("No tar file supplied"), protocol.Ko, encoder)
 			log.Printf("Error saving files for deployment: %v", err)
+			_ = handleResponse(fmt.Sprintf("No tar file supplied"), protocol.Ko, encoder)
 			return
 		}
 
 		if err := os.Mkdir(config.WorkingDirectory+"/"+request.Name, 0770); err != nil && !os.IsExist(err) {
-			_ = handleResponse(fmt.Sprintf("Error creating directory for container: %v", err), protocol.Ko, encoder)
 			log.Printf("Terminating deployment due to directory creation error: %v", err)
+			_ = handleResponse(fmt.Sprintf("Error creating directory for container: %v", err), protocol.Ko, encoder)
 			return
 		}
 
-		if tarFile != nil {
-			if err = builder.ImportImageFromFile(tarFile.Name()); err != nil {
+		if tarFilePath != "" {
+			if err = builder.ImportImageFromFile(tarFilePath); err != nil {
+				log.Printf("Error importing image: %v", err)
 				_ = handleResponse(fmt.Sprintf("Error importing tar file: %v", err), protocol.Ko, encoder)
 				return
 			}
@@ -273,29 +275,24 @@ func saveComposeFile(name string, fileContent string) error {
 	return nil
 }
 
-func receiveStreamedTar(dataChannel ssh.Channel, name string, tarSize int64) (*os.File, error) {
+func receiveStreamedTar(dataChannel ssh.Channel, name string, tarSize int64) (string, error) {
+	log.Printf("Starting to receive tar file of %d bytes", tarSize)
 	tarFilePath := filepath.Join(config.WorkingDirectory, name+".tar")
 	tarFile, err := os.Create(tarFilePath)
+	defer tarFile.Close()
 	if err != nil {
-		return nil, fmt.Errorf("error creating tar file: %v", err)
+		return "", fmt.Errorf("error creating tar file: %v", err)
 	}
 
-	// Copia i dati dal canale direttamente al file
-	_, err = io.CopyN(tarFile, dataChannel, tarSize)
+	log.Printf("Created tar file at %s, starting copy...", tarFilePath)
+	bytesWritten, err := io.CopyN(tarFile, dataChannel, tarSize)
+	log.Printf("Copied %d bytes out of %d expected", bytesWritten, tarSize)
+
 	if err != nil {
-		tarFile.Close()
-		os.Remove(tarFilePath)
-		return nil, fmt.Errorf("error writing tar file: %v", err)
+		return "", fmt.Errorf("error writing tar file: %v", err)
 	}
 
-	// Riposiziona il puntatore del file all'inizio
-	if _, err := tarFile.Seek(0, 0); err != nil {
-		tarFile.Close()
-		os.Remove(tarFilePath)
-		return nil, fmt.Errorf("error seeking tar file: %v", err)
-	}
-
-	return tarFile, nil
+	return tarFile.Name(), nil
 }
 
 func stopContainer(name string) error {

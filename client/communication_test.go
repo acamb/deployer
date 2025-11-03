@@ -209,11 +209,6 @@ func TestDeployImage(t *testing.T) {
 	composeData := []byte("version: '3'\nservices:\n  test:\n    image: test")
 	require.NoError(t, os.WriteFile(composeFile, composeData, 0644))
 
-	// Open files
-	tarFileHandle, err := os.Open(tarFile)
-	require.NoError(t, err)
-	defer tarFileHandle.Close()
-
 	composeFileHandle, err := os.Open(composeFile)
 	require.NoError(t, err)
 	defer composeFileHandle.Close()
@@ -229,7 +224,7 @@ func TestDeployImage(t *testing.T) {
 
 	mockChannel.Write(responseBuffer.Bytes())
 
-	err = DeployImage("test-app", tarFileHandle, composeFileHandle)
+	err = DeployImage("test-app", tarFile, composeFileHandle)
 	assert.NoError(t, err)
 }
 
@@ -284,10 +279,6 @@ func TestHandleRequestEncoding(t *testing.T) {
 	require.NoError(t, os.WriteFile(tarFile, tarData, 0644))
 	require.NoError(t, os.WriteFile(composeFile, composeData, 0644))
 
-	tarFileHandle, err := os.Open(tarFile)
-	require.NoError(t, err)
-	defer tarFileHandle.Close()
-
 	composeFileHandle, err := os.Open(composeFile)
 	require.NoError(t, err)
 	defer composeFileHandle.Close()
@@ -303,7 +294,7 @@ func TestHandleRequestEncoding(t *testing.T) {
 	mockChannel.Write(responseBuffer.Bytes())
 
 	// Call handleRequest directly
-	err = handleRequest("test-container", protocol.Deploy, tarFileHandle, composeFileHandle)
+	err = handleRequest("test-container", protocol.Deploy, tarFile, composeFileHandle)
 	assert.NoError(t, err)
 }
 
