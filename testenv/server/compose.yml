@@ -1,0 +1,29 @@
+services:
+  docker:
+    image: docker:dind
+    privileged: true
+    environment:
+      DOCKER_TLS_CERTDIR: /certs
+    volumes:
+      - docker-certs:/certs
+  deployer-test-server:
+    container_name: deployer-test-server
+    build:
+        context: .
+        dockerfile: Dockerfile
+        args:
+           SSH_PUBLIC_KEY: "${SSH_PUBLIC_KEY}"
+           HOST_RSA_KEY: "${HOST_RSA_KEY}"
+    ports:
+        - "7676:7676"
+    volumes:
+        - ../../bin/deployer-server_dev:/usr/bin/deployer-server
+        - docker-certs:/certs:ro
+    environment:
+      DOCKER_HOST: tcp://docker:2376
+      DOCKER_TLS_VERIFY: 1
+      DOCKER_CERT_PATH: /certs/client
+    depends_on:
+      - docker
+volumes:
+  docker-certs: {}

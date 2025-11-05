@@ -12,15 +12,15 @@ all: server client
 
 server:
 	mkdir -p $(BINDIR)
-	go build -ldflags "-X 'main.Version=$(VERSION)'" -o $(BINDIR)/deployer-server_$(VERSION) ./server
+	go build -ldflags "-X 'deployer/server/version.Version=$(VERSION)'" -o $(BINDIR)/deployer-server_$(VERSION) ./server
 
 client:
 	mkdir -p $(BINDIR)
-	go build -ldflags "-X 'main.Version=$(VERSION)'" -o $(BINDIR)/deployer-client_$(VERSION) ./client/cmd
+	go build -ldflags "-X 'deployer/client/version.Version=$(VERSION)'" -o $(BINDIR)/deployer-client_$(VERSION) ./client/cmd
 
 client-windows:
 	mkdir -p $(BINDIR)
-	GOOS=windows GOARCH=amd64 go build -ldflags "-X 'main.Version=$(VERSION)'" -o $(BINDIR)/deployer-client_$(VERSION).exe ./client/cmd
+	GOOS=windows GOARCH=amd64 go build -ldflags "-X 'deployer/client/version.Version=$(VERSION)'" -o $(BINDIR)/deployer-client_$(VERSION).exe ./client/cmd
 
 clean:
 	rm -rf $(BINDIR) $(PKGDIR) $(DEBNAME) $(DEBNAME_CLIENT) $(RPMNAME) $(RPMNAME_CLIENT)

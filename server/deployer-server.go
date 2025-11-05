@@ -6,6 +6,7 @@ import (
 	"deployer/builder"
 	"deployer/protocol"
 	serverConfig "deployer/server/config"
+	"deployer/server/version"
 	"encoding/gob"
 	"errors"
 	"flag"
@@ -26,14 +27,14 @@ import (
 var config *serverConfig.ServerConfiguration
 
 func main() {
-	version := flag.Bool("v", false, "Prints the version of the program")
+	versionFlag := flag.Bool("v", false, "Prints the version of the program")
 	configFilePath := flag.String("config", "config.yaml", "Path to configuration file")
 	sampleConfig := flag.Bool("sample-config", false, "Generate a sample configuration file")
 	flag.Parse()
 	var err error
 	var listener net.Listener
-	if *version {
-		log.Printf("Deployer Server Version: %s", Version)
+	if *versionFlag {
+		log.Printf("Deployer Server Version: %s", version.Version)
 		return
 	}
 	if *sampleConfig {
@@ -97,12 +98,21 @@ func handleConnection(conn net.Conn, sshConfig *ssh.ServerConfig) {
 	defer dataChannel.Close()
 	defer sshConn.Close()
 
+	handleRequest(dataChannel)
+}
+
+func handleRequest(dataChannel ssh.Channel) {
 	decoder := gob.NewDecoder(dataChannel)
 	encoder := gob.NewEncoder(dataChannel)
 	var request protocol.Request
 	if err := decoder.Decode(&request); err != nil {
 		log.Printf("Error reading request, invalid format: %v", err)
 		return
+	}
+
+	if request.Version != version.Version {
+		log.Printf("Protocol version mismatch: client %s, server %s. Connection will be closed", request.Version, version.Version)
+		_ = handleResponse("Protocol version mismatch: client: "+request.Version+", server: "+version.Version, protocol.Ko, encoder)
 	}
 
 	if request.Command == protocol.Stop {
@@ -128,6 +138,7 @@ func handleConnection(conn net.Conn, sshConfig *ssh.ServerConfig) {
 	} else if request.Command == protocol.Deploy {
 		composeFile := string(request.ComposeFile)
 		tarFilePath := ""
+		var err error
 		if request.TarSize > 0 {
 			fmt.Println("Receiving tar file of size", request.TarSize)
 			tarFilePath, err = receiveStreamedTar(dataChannel, request.Name, request.TarSize)

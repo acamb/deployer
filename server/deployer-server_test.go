@@ -5,6 +5,7 @@ import (
 	"crypto/rand"
 	"crypto/rsa"
 	"crypto/x509"
+	"deployer/client/version"
 	"deployer/protocol"
 	serverConfig "deployer/server/config"
 	"encoding/gob"
@@ -146,7 +147,6 @@ func (m *MockSSHConnMetadata) LocalAddr() net.Addr {
 	return addr
 }
 
-// Mock SSH New Channel
 type MockSSHNewChannel struct {
 	channelType   string
 	acceptChannel ssh.Channel
@@ -177,17 +177,6 @@ func (m *MockSSHNewChannel) ExtraData() []byte {
 	return nil
 }
 
-// Test setup utilities
-func setupTestConfig(t *testing.T) *serverConfig.ServerConfiguration {
-	tempDir := t.TempDir()
-	return &serverConfig.ServerConfiguration{
-		Port:             7676,
-		ListenAddress:    "127.0.0.1",
-		WorkingDirectory: tempDir,
-		HostKeyPath:      filepath.Join(tempDir, "host_key"),
-	}
-}
-
 func setupTestEnvironment(t *testing.T) {
 	tempDir := t.TempDir()
 	config = &serverConfig.ServerConfiguration{
@@ -197,7 +186,6 @@ func setupTestEnvironment(t *testing.T) {
 		HostKeyPath:      filepath.Join(tempDir, "host_key"),
 	}
 
-	// Create working directory
 	err := os.MkdirAll(config.WorkingDirectory, 0770)
 	require.NoError(t, err)
 }
@@ -207,60 +195,49 @@ var testHostKeys []string
 var testPublicKeys []ssh.PublicKey
 
 func createTestHostKey(t *testing.T, keyPath string) {
-	// Generate a 2048-bit RSA key on the fly
 	privateKey, err := rsa.GenerateKey(rand.Reader, 2048)
 	if err != nil {
 		t.Fatalf("Error generating RSA key: unable to create test key - %v", err)
 	}
 
-	// Convert the key to PEM format
 	privateKeyPEM := &pem.Block{
 		Type:  "RSA PRIVATE KEY",
 		Bytes: x509.MarshalPKCS1PrivateKey(privateKey),
 	}
 
-	// Write the key to file
 	privateKeyBytes := pem.EncodeToMemory(privateKeyPEM)
 	err = os.WriteFile(keyPath, privateKeyBytes, 0600)
 	if err != nil {
 		t.Fatalf("Error writing key: unable to save test key to %s - %v", keyPath, err)
 	}
 
-	// Add the path to the list for final cleanup
 	testHostKeys = append(testHostKeys, keyPath)
 }
 
 func generateTestSSHPublicKey(t *testing.T) (ssh.PublicKey, string) {
-	// Generate an RSA key for SSH
 	privateKey, err := rsa.GenerateKey(rand.Reader, 2048)
 	if err != nil {
 		t.Fatalf("Error generating RSA key for SSH: unable to create key pair - %v", err)
 	}
 
-	// Create the SSH public key
 	publicKey, err := ssh.NewPublicKey(&privateKey.PublicKey)
 	if err != nil {
 		t.Fatalf("Error converting SSH public key: invalid key - %v", err)
 	}
 
-	// Generate the public key string in authorized_keys format
 	publicKeyString := string(ssh.MarshalAuthorizedKey(publicKey))
-
-	// Add to the cleanup list
 	testPublicKeys = append(testPublicKeys, publicKey)
 
 	return publicKey, publicKeyString
 }
 
 func cleanupTestKeys(t *testing.T) {
-	// Remove all key files created during tests
 	for _, keyPath := range testHostKeys {
 		if err := os.Remove(keyPath); err != nil && !os.IsNotExist(err) {
 			t.Logf("Warning: unable to remove test key %s: %v", keyPath, err)
 		}
 	}
 
-	// Reset the lists
 	testHostKeys = nil
 	testPublicKeys = nil
 }
@@ -270,8 +247,6 @@ func createTestAuthorizedKeys(t *testing.T, keyPath string, validKeys []string) 
 	err := os.WriteFile(keyPath, []byte(content), 0600)
 	require.NoError(t, err)
 }
-
-// Tests for utility functions
 
 func TestLoadHostKey(t *testing.T) {
 	testCases := []struct {
@@ -354,7 +329,6 @@ func TestLoadHostKey(t *testing.T) {
 func TestCheckAuthorizedKey(t *testing.T) {
 	setupTestEnvironment(t)
 
-	// Clean up keys at the end of the test
 	defer cleanupTestKeys(t)
 
 	testCases := []struct {
@@ -640,7 +614,6 @@ func TestReceiveStreamedTar(t *testing.T) {
 
 	for _, tc := range testCases {
 		t.Run(tc.name, func(t *testing.T) {
-			// Create a mock SSH channel with the tar data
 			mockChannel := &MockSSHChannel{
 				Buffer: bytes.NewBuffer(tc.tarData),
 				closed: false,
@@ -658,12 +631,9 @@ func TestReceiveStreamedTar(t *testing.T) {
 				assert.NoError(t, err)
 				require.NotNil(t, tarFileName)
 
-				// Verify the file was created
 				assert.FileExists(t, tarFileName)
 
-				// Verify the content if we have data
 				if len(tc.tarData) > 0 {
-					// Read and verify content
 					tarFile, err := os.Open(tarFileName)
 					defer tarFile.Close()
 					assert.NoError(t, err)
@@ -695,7 +665,8 @@ func TestStopContainer(t *testing.T) {
 				err := os.MkdirAll(config.WorkingDirectory+"/"+containerName, 0770)
 				require.NoError(t, err)
 			},
-			expectError: true, // docker-compose command will fail in test environment
+			expectError:  true,
+			errorMessage: "Error stopping container: exit status 1. Output: no configuration file provided: not found",
 		},
 		{
 			name:          "Missing container directory",
@@ -723,6 +694,35 @@ func TestStopContainer(t *testing.T) {
 	}
 }
 
+func TestProtocolVersionMatch(t *testing.T) {
+	setupTestEnvironment(t)
+	t.Run("Protocol version mismatch", func(t *testing.T) {
+		mockChannel := &MockSSHChannel{
+			Buffer: &bytes.Buffer{},
+			closed: false,
+		}
+		encoder := gob.NewEncoder(mockChannel)
+		decoder := gob.NewDecoder(mockChannel)
+		err := encoder.Encode(protocol.Request{
+			Version:     "invalid-version",
+			Command:     protocol.Deploy,
+			Name:        "test-app",
+			TarSize:     0,
+			ComposeFile: []byte("version: '3'\nservices:\n  web:\n    image: nginx"),
+		})
+		require.NoError(t, err)
+
+		handleRequest(mockChannel)
+
+		response := &protocol.Response{}
+		err = decoder.Decode(response)
+		require.NoError(t, err)
+
+		assert.Equal(t, protocol.Ko, response.Status)
+		assert.Contains(t, response.Message, "Protocol version mismatch")
+	})
+}
+
 func TestProtocolRequestStructure(t *testing.T) {
 	testCases := []struct {
 		name    string
@@ -731,6 +731,7 @@ func TestProtocolRequestStructure(t *testing.T) {
 		{
 			name: "Valid deploy request",
 			request: protocol.Request{
+				Version:     version.Version,
 				Command:     protocol.Deploy,
 				Name:        "test-app",
 				TarSize:     1024,
@@ -740,6 +741,7 @@ func TestProtocolRequestStructure(t *testing.T) {
 		{
 			name: "Request with only compose file",
 			request: protocol.Request{
+				Version:     version.Version,
 				Command:     protocol.Start,
 				Name:        "compose-only",
 				TarSize:     0,
@@ -749,6 +751,7 @@ func TestProtocolRequestStructure(t *testing.T) {
 		{
 			name: "Empty request",
 			request: protocol.Request{
+				Version:     version.Version,
 				Command:     protocol.Stop,
 				Name:        "empty-app",
 				TarSize:     0,
@@ -763,11 +766,9 @@ func TestProtocolRequestStructure(t *testing.T) {
 			encoder := gob.NewEncoder(&buffer)
 			decoder := gob.NewDecoder(&buffer)
 
-			// Encode the request
 			err := encoder.Encode(&tc.request)
 			assert.NoError(t, err)
 
-			// Decode and verify
 			var decoded protocol.Request
 			err = decoder.Decode(&decoded)
 			assert.NoError(t, err)
@@ -794,12 +795,17 @@ func TestStartContainer(t *testing.T) {
 		{
 			name:          "Valid container with compose content",
 			containerName: "test-app",
-			composeFile:   "version: '3'\\nservices:\\n  web:\\n    image: nginx",
+			composeFile: `
+services:
+  test:
+    image: not-exists
+`,
 			setupFunc: func(t *testing.T, containerName string) {
 				err := os.MkdirAll(config.WorkingDirectory+"/"+containerName, 0770)
 				require.NoError(t, err)
 			},
-			expectError: true, // docker-compose command will fail in test environment
+			expectError:  true, // if this fails with the specified error it's ok
+			errorMessage: "Error pull access denied for not-exists",
 		},
 		{
 			name:          "Empty compose file",
@@ -809,7 +815,8 @@ func TestStartContainer(t *testing.T) {
 				err := os.MkdirAll(config.WorkingDirectory+"/"+containerName, 0770)
 				require.NoError(t, err)
 			},
-			expectError: true, // docker-compose command will fail in test environment
+			expectError:  true,
+			errorMessage: "no configuration file provided",
 		},
 		{
 			name:          "Missing container directory",
@@ -817,6 +824,7 @@ func TestStartContainer(t *testing.T) {
 			composeFile:   "version: '3'",
 			setupFunc:     func(t *testing.T, containerName string) {},
 			expectError:   true,
+			errorMessage:  "no such file or directory",
 		},
 	}
 

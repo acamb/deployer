@@ -46,6 +46,7 @@ func (s Status) String() string {
 }
 
 type Request struct {
+	Version     string
 	Command     Command
 	Name        string
 	TarSize     int64

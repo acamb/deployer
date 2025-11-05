@@ -5,6 +5,7 @@ import (
 	"bytes"
 	"crypto/md5"
 	"deployer/client/config"
+	"deployer/client/version"
 	"deployer/protocol"
 	"encoding/gob"
 	"errors"
@@ -114,6 +115,7 @@ func handleRequest(name string, req protocol.Command, tarFilePath string, compos
 	var err error
 	tarFile, err := os.Open(tarFilePath)
 	request := protocol.Request{
+		Version: version.Version,
 		Name:    name,
 		Command: req,
 	}
@@ -141,7 +143,13 @@ func handleRequest(name string, req protocol.Command, tarFilePath string, compos
 		if _, err := tarFile.Seek(0, 0); err != nil {
 			return fmt.Errorf("error seeking tar file: %v", err)
 		}
-		_, err = io.Copy(dataChannel, tarFile)
+		progressTracker := &ProgressTracker{
+			BytesTotal: request.TarSize,
+		}
+		reader := io.TeeReader(tarFile, progressTracker)
+		progressTracker.StartReporting()
+		_, err = io.Copy(dataChannel, reader)
+		progressTracker.StopReporting()
 		if err != nil {
 			return fmt.Errorf("error sending tar file: %v", err)
 		}

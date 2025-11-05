@@ -4,3 +4,8 @@
     Support for custom compose.yaml and version support
 0.3.0 2025/11/01:
     Avoid keeping tar image in memory while loading from remote
+0.3.1 2025/11/02:
+    Fix issue with tar transfer
+xxx:
+    Client / Server version checking
+    Tar file transfer progress indication

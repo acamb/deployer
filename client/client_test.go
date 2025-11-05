@@ -65,20 +65,15 @@ func generateRSAKey(t *testing.T, path string) {
 }
 
 func generateDSAKey(t *testing.T, path string) {
-	// DSA is deprecated, so we'll use RSA as fallback for testing
-	// but save it with a different name for discovery testing
 	generateRSAKey(t, path)
 }
 
 func TestLoadPrivateKeySimple(t *testing.T) {
-	// Create a temporary directory for test
 	tempDir := t.TempDir()
 
-	// Generate a simple RSA key
 	keyPath := filepath.Join(tempDir, "test_key")
 	generateRSAKey(t, keyPath)
 
-	// Test with explicit key path
 	config := config.Configuration{
 		PrivateKey: keyPath,
 	}
@@ -90,19 +85,15 @@ func TestLoadPrivateKeySimple(t *testing.T) {
 }
 
 func TestLoadPrivateKeyAutoDiscovery(t *testing.T) {
-	// Create a temporary directory for test
 	tempDir := t.TempDir()
 	sshDir := filepath.Join(tempDir, ".ssh")
 	require.NoError(t, os.MkdirAll(sshDir, 0700))
 
-	// Generate a simple RSA key
 	keyPath := filepath.Join(sshDir, "id_rsa")
 	generateRSAKey(t, keyPath)
 
-	// Set HOME environment variable
 	t.Setenv("HOME", tempDir)
 
-	// Test with auto discovery
 	config := config.Configuration{}
 
 	signer, err := loadPrivateKey(config)
@@ -112,16 +103,12 @@ func TestLoadPrivateKeyAutoDiscovery(t *testing.T) {
 }
 
 func TestLoadPrivateKeyPriority(t *testing.T) {
-	// Create a temporary directory for test
 	tempDir := t.TempDir()
 	sshDir := filepath.Join(tempDir, ".ssh")
 	require.NoError(t, os.MkdirAll(sshDir, 0700))
 
-	// Create RSA key first (lower priority)
 	rsaPath := filepath.Join(sshDir, "id_rsa")
 	generateRSAKey(t, rsaPath)
-
-	// Set HOME environment variable
 	t.Setenv("HOME", tempDir)
 
 	// Test that it finds RSA key when only RSA is available
@@ -139,19 +126,15 @@ func TestLoadPrivateKeyEd25519Priority(t *testing.T) {
 	sshDir := filepath.Join(tempDir, ".ssh")
 	require.NoError(t, os.MkdirAll(sshDir, 0700))
 
-	// Create RSA key first (lower priority)
 	rsaPath := filepath.Join(sshDir, "id_rsa")
 	generateRSAKey(t, rsaPath)
 
-	// Create ECDSA key (medium priority)
 	ecdsaPath := filepath.Join(sshDir, "id_ecdsa")
 	generateECDSAKey(t, ecdsaPath)
 
-	// Create Ed25519 key (highest priority)
 	ed25519Path := filepath.Join(sshDir, "id_ed25519")
 	generateEd25519Key(t, ed25519Path)
 
-	// Set HOME environment variable
 	t.Setenv("HOME", tempDir)
 
 	// Test that it picks Ed25519 key (highest priority)
@@ -169,15 +152,10 @@ func TestLoadPrivateKeyECDSAOverRSA(t *testing.T) {
 	sshDir := filepath.Join(tempDir, ".ssh")
 	require.NoError(t, os.MkdirAll(sshDir, 0700))
 
-	// Create RSA key first (lower priority)
 	rsaPath := filepath.Join(sshDir, "id_rsa")
 	generateRSAKey(t, rsaPath)
-
-	// Create ECDSA key (higher priority than RSA)
 	ecdsaPath := filepath.Join(sshDir, "id_ecdsa")
 	generateECDSAKey(t, ecdsaPath)
-
-	// Set HOME environment variable
 	t.Setenv("HOME", tempDir)
 
 	// Test that it picks ECDSA key over RSA
@@ -197,8 +175,6 @@ func TestLoadPrivateKeyNoKeysFound(t *testing.T) {
 
 	// Set HOME environment variable
 	t.Setenv("HOME", tempDir)
-
-	// Test with no keys
 	config := config.Configuration{}
 
 	signer, err := loadPrivateKey(config)

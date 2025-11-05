@@ -4,10 +4,10 @@ import (
 	"deployer/builder"
 	"deployer/client"
 	"deployer/client/config"
+	"deployer/client/version"
+	"github.com/spf13/cobra"
 	"log"
 	"os"
-
-	"github.com/spf13/cobra"
 )
 
 func main() {
@@ -16,7 +16,7 @@ func main() {
 	var err error
 	rootCmd := &cobra.Command{
 		Use:     "deployer-client",
-		Version: Version,
+		Version: version.Version,
 		Short:   "deployer client",
 	}
 
@@ -121,7 +121,7 @@ func main() {
 			if err := DeployImage(configuration); err != nil {
 				log.Fatalf("Error deploying container: %v", err)
 			} else {
-				log.Println("Container deploying successfully")
+				log.Println("Container deployed successfully")
 			}
 
 		},
