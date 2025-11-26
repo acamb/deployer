@@ -10,6 +10,7 @@ Deployer is designed for homelabs and small infrastructure setups where you need
 
 - **Docker Integration**: Deploy and manage Docker containers remotely: deploy, start, stop, and view logs
 - **Secure Communication**: All data encrypted over SSH channels, public key authentication and host key verification
+- **Revisions**: deploy multiple revisions of your application, roll back to previous versions easily
 
 ## Architecture
 
@@ -35,6 +36,8 @@ All container operations (`start`, `stop`, `restart`, `logs`) are executed on th
 ### Deployment Options
 - **With Dockerfile**: Full build and deploy - client builds image locally and transfers it
 - **Compose only**: Use existing images from registries - faster for updates using pre-built images
+
+The client supports also building through docker compose, mixing both methods as needed.
 
 ## Server Setup - Debian Package Installation (Recommended)
 
@@ -327,6 +330,9 @@ image_name: myapp:latest
 - **port**: Deployer server port (default: 7676)
 - **name**: Unique deployment identifier
 - **image_name**: Docker image name to deploy
+- **private_key**: Path to SSH private key (optional, defaults to user's SSH keys)
+- **build_method**: 'dockerfile' or 'compose' (default: 'dockerfile')
+- **enable_revisions**: true/false (default: false)
 
 ### 4. Build Client (if needed)
 
@@ -347,11 +353,43 @@ The server will use the compose.yml file to deploy and manage the container.
 ### Client Operations
 
 ```bash
-deployer-client deploy                 # Deploy application
-deployer-client start myapp            # Start container
-deployer-client stop myapp             # Stop container
-deployer-client restart myapp          # Restart container
-deployer-client logs myapp             # View container logs
+deployer-client deploy           # Deploy application
+deployer-client start            # Start container
+deployer-client stop             # Stop container
+deployer-client restart          # Restart container
+deployer-client logs             # View container logs
+deployer-client revisions        # List running revisions of the application
+```
+
+
+
+### Revisions
+Revisions are the Deployer way of versioning your deployments, keeping a separate image and container for each revision.
+This allows you to easily roll back to previous versions of your application if needed, do zero-downtime and blue-green deployments by switching between revisions and more.
+Each revision is kept in a separate folder on the server under the project working directory.
+
+To enable revisions, add the following to your `compose.yml`:
+
+```yaml
+enable_revisions: true
+```
+
+You can create a new revision with the `--new-revision` flag during deployment:
+
+```bash
+deployer-client deploy --new-revision
+```
+All the commands (except `revisions`) accept a `--revision <revision_number>` flag to target a specific revision when the revisions are enabled.
+
+### Build method
+The client supports two build methods:
+- **Dockerfile**: The client builds the Docker image locally using the provided Dockerfile
+- **Compose build**: The client builds the Docker image using `docker-compose build`, allowing more complex build scenarios
+
+You can specify the build method in the client configuration file:
+
+```yaml
+build_method: dockerfile  # or 'compose', defalt is 'dockerfile'
 ```
 
 ## Troubleshooting
