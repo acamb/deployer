@@ -1,3 +1,4 @@
 services:
   test:
     image: test
+    container_name: test

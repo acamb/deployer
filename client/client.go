@@ -83,6 +83,7 @@ func Logs(name string, revision int32) (<-chan string, error) {
 	request := protocol.Request{
 		Name:    name,
 		Command: protocol.Logs,
+		Version: version.Version,
 	}
 	if revision > -1 {
 		request.Revision = fmt.Sprint(revision)
@@ -116,6 +117,7 @@ func Revisions(name string) ([]string, error) {
 	request := protocol.Request{
 		Name:    name,
 		Command: protocol.Revisions,
+		Version: version.Version,
 	}
 	if err := encoder.Encode(&request); err != nil {
 		return nil, err

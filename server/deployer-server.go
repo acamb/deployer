@@ -322,7 +322,8 @@ func saveComposeFile(request protocol.Request, fileContent string) error {
 	}
 	defer file.Close()
 
-	var doc map[string]interface{}
+	var doc = make(map[string]interface{})
+
 	if err := yaml.Unmarshal([]byte(fileContent), &doc); err != nil {
 		return errors.New("Error parsing compose file content: " + err.Error())
 	}
@@ -334,6 +335,9 @@ func saveComposeFile(request protocol.Request, fileContent string) error {
 					if !strings.Contains(img, ":") {
 						svc["image"] = img + ":" + request.Revision
 					}
+				}
+				if img, ok := svc["container_name"].(string); ok && img != "" {
+					svc["container_name"] = svc["container_name"].(string) + "_" + request.Revision
 				}
 			}
 		}
