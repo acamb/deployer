@@ -55,6 +55,7 @@ type Request struct {
 	TarSize     int64
 	ComposeFile []byte
 	Revision    string
+	DeleteFiles bool
 }
 
 func (r Request) String() string {

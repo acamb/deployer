@@ -18,6 +18,7 @@ func main() {
 	var err error
 	var revision *int32
 	var newRevision *bool
+	var deleteFiles *bool
 	rootCmd := &cobra.Command{
 		Use:     "deployer-client",
 		Version: version.Version,
@@ -96,21 +97,23 @@ func main() {
 		},
 	})
 
-	rootCmd.AddCommand(&cobra.Command{
+	stopCommand := &cobra.Command{
 		Use:   "stop",
 		Short: "Stop the remote container",
 		Run: func(cmd *cobra.Command, args []string) {
 			//TODO deleteFiles flag
 			Connect(configuration)
 			log.Default().Println("Stopping remote container...")
-			if err := client.StopContainer(configuration.Name, *revision); err != nil {
+			if err := client.StopContainer(configuration.Name, *revision, *deleteFiles); err != nil {
 				log.Fatalf("Error stopping container: %v", err)
 			} else {
 				log.Println("Container stopped successfully")
 			}
 
 		},
-	})
+	}
+	deleteFiles = stopCommand.Flags().BoolP("delete-files", "d", false, "Delete container config after stopping")
+	rootCmd.AddCommand(stopCommand)
 
 	rootCmd.AddCommand(&cobra.Command{
 		Use:   "restart",

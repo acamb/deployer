@@ -736,6 +736,44 @@ func TestStopContainer(t *testing.T) {
 	}
 }
 
+func TestStopContainerOkDeleteFiles(t *testing.T) {
+	setupTestEnvironment(t)
+	t.Run("Stop container and delete files", func(t *testing.T) {
+		containerName := "test-app"
+		request := protocol.Request{
+			Name:        "test-app",
+			DeleteFiles: true,
+		}
+		err := os.MkdirAll(config.WorkingDirectory+"/"+containerName, 0770)
+		require.NoError(t, err)
+		err = stopContainer(request)
+		assert.Error(t, err)
+		//on error we don't want to delete files
+		_, statErr := os.Stat(config.WorkingDirectory + "/" + containerName)
+		assert.False(t, os.IsNotExist(statErr), "Container directory should be deleted")
+	})
+}
+
+func TestStopContainerErrorAndDontDeleteFiles(t *testing.T) {
+	setupTestEnvironment(t)
+	t.Run("Stop container and delete files", func(t *testing.T) {
+		containerName := "test-app"
+		request := protocol.Request{
+			Name:        "test-app",
+			DeleteFiles: true,
+		}
+		err := os.MkdirAll(config.WorkingDirectory+"/"+containerName, 0770)
+		require.NoError(t, err)
+		TestingMode = true //simulate success on docker-compose down
+		err = stopContainer(request)
+		TestingMode = false
+		assert.NoError(t, err)
+		//on error we don't want to delete files
+		_, statErr := os.Stat(config.WorkingDirectory + "/" + containerName)
+		assert.True(t, os.IsNotExist(statErr), "Container directory should be deleted")
+	})
+}
+
 func TestProtocolVersionMatch(t *testing.T) {
 	setupTestEnvironment(t)
 	t.Run("Protocol version mismatch", func(t *testing.T) {

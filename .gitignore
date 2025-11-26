@@ -8,3 +8,4 @@ pkg-rpm/
 pkg-client-rpm/
 /server/config.yaml
 /testenv/client/test.tar
+/testenv/client/REVISION

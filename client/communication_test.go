@@ -152,7 +152,7 @@ func TestStopContainer(t *testing.T) {
 	// Setup mock to return this response
 	mockChannel.Write(responseBuffer.Bytes())
 
-	err = StopContainer("test-container", -1)
+	err = StopContainer("test-container", -1, false)
 	assert.NoError(t, err)
 }
 
@@ -294,7 +294,7 @@ func TestHandleRequestEncoding(t *testing.T) {
 	mockChannel.Write(responseBuffer.Bytes())
 
 	// Call handleRequest directly
-	err = handleRequest("test-container", protocol.Deploy, tarFile, composeFileHandle, -1)
+	err = handleRequest("test-container", protocol.Deploy, tarFile, composeFileHandle, -1, false)
 	assert.NoError(t, err)
 }
 

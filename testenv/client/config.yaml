@@ -1,6 +1,7 @@
 host: localhost
 port: 7676
-name: test
+name: test_nginx
 image_name: test
+build_method: compose
 private_key: /home/andrea/.ssh/id_ed25519
-enable_revisions: true
+#enable_revisions: true

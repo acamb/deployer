@@ -1,4 +1,4 @@
 services:
   test:
-    image: test
+    image: nginx
     container_name: test

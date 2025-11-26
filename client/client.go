@@ -59,15 +59,15 @@ func Connect(configuration config.Configuration) error {
 }
 
 func StartContainer(name string, revision int32) error {
-	return handleSimpleRequest(name, protocol.Start, revision)
+	return handleSimpleRequest(name, protocol.Start, revision, false)
 }
 
-func StopContainer(name string, revision int32) error {
-	return handleSimpleRequest(name, protocol.Stop, revision)
+func StopContainer(name string, revision int32, deleteFiles bool) error {
+	return handleSimpleRequest(name, protocol.Stop, revision, deleteFiles)
 }
 
 func RestartContainer(name string, revision int32) error {
-	return handleSimpleRequest(name, protocol.Restart, revision)
+	return handleSimpleRequest(name, protocol.Restart, revision, false)
 }
 
 func DeployImage(name string, tarFilePath string, composeFile *os.File, revision int32) error {
@@ -76,7 +76,8 @@ func DeployImage(name string, tarFilePath string, composeFile *os.File, revision
 		protocol.Deploy,
 		tarFilePath,
 		composeFile,
-		revision)
+		revision,
+		false)
 }
 
 func Logs(name string, revision int32) (<-chan string, error) {
@@ -137,11 +138,11 @@ func Revisions(name string) ([]string, error) {
 	return revisions.Revisions, nil
 }
 
-func handleSimpleRequest(name string, req protocol.Command, revision int32) error {
-	return handleRequest(name, req, "", nil, revision)
+func handleSimpleRequest(name string, req protocol.Command, revision int32, deleteFiles bool) error {
+	return handleRequest(name, req, "", nil, revision, deleteFiles)
 }
 
-func handleRequest(name string, req protocol.Command, tarFilePath string, composeFile *os.File, revision int32) error {
+func handleRequest(name string, req protocol.Command, tarFilePath string, composeFile *os.File, revision int32, deleteFiles bool) error {
 	var err error
 	tarFile, err := os.Open(tarFilePath)
 	request := protocol.Request{
@@ -151,6 +152,9 @@ func handleRequest(name string, req protocol.Command, tarFilePath string, compos
 	}
 	if revision > -1 {
 		request.Revision = fmt.Sprint(revision)
+	}
+	if deleteFiles {
+		request.DeleteFiles = true
 	}
 
 	if tarFile != nil {

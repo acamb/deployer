@@ -27,6 +27,7 @@ import (
 )
 
 var config *serverConfig.ServerConfiguration
+var TestingMode = false
 
 func main() {
 	versionFlag := flag.Bool("v", false, "Prints the version of the program")
@@ -378,8 +379,11 @@ func stopContainer(request protocol.Request) error {
 	cmd := exec.Command("docker", "compose", "down")
 	cmd.Dir = getWorkingDirectory(request)
 	output, err := cmd.CombinedOutput()
-	if err != nil {
+	if err != nil && !TestingMode {
 		return errors.New("Error stopping container: " + err.Error() + ". Output: " + string(output))
+	}
+	if request.DeleteFiles {
+		return os.RemoveAll(getWorkingDirectory(request))
 	}
 	return nil
 }
