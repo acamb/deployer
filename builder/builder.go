@@ -5,6 +5,7 @@ import (
 	"deployer/client/config"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"log"
 	"os"
@@ -31,7 +32,7 @@ func GetClient(ctx context.Context) (*client.Client, error) {
 	return dockerClient, nil
 }
 
-func BuildImage(configuration *config.Configuration) error {
+func BuildImage(configuration *config.Configuration, revision int32) error {
 	buildMethod := configuration.BuildMethod
 	if configuration.BuildMethod == "" {
 		if _, err := os.Stat("Dockerfile"); os.IsNotExist(err) {
@@ -42,14 +43,24 @@ func BuildImage(configuration *config.Configuration) error {
 			buildMethod = config.Docker
 		}
 	}
+	var err error
 	switch buildMethod {
 	case config.Docker:
-		return BuildImageWithDocker(configuration)
+		err = BuildImageWithDocker(configuration, revision)
+		break
 	case config.Compose:
-		return BuildImageWithCompose(configuration)
+		err = BuildImageWithCompose(configuration)
+		break
 	default:
 		return errors.New("unknown build method: " + string(buildMethod))
 	}
+	if err != nil {
+		return err
+	}
+	if revision > -1 {
+		err = TagImage(configuration, configuration.ImageName+fmt.Sprintf(":%d", revision))
+	}
+	return err
 }
 
 func BuildImageWithCompose(configuration *config.Configuration) error {
@@ -68,7 +79,7 @@ func BuildImageWithCompose(configuration *config.Configuration) error {
 	return nil
 }
 
-func BuildImageWithDocker(configuration *config.Configuration) error {
+func BuildImageWithDocker(configuration *config.Configuration, revision int32) error {
 	ctx := context.Background()
 	cli, err := GetClient(ctx)
 	if err != nil {
@@ -81,7 +92,6 @@ func BuildImageWithDocker(configuration *config.Configuration) error {
 		return err
 	}
 	defer buildContext.Close()
-
 	buildOptions := build.ImageBuildOptions{
 		Tags:       []string{configuration.ImageName},
 		Dockerfile: "Dockerfile",
@@ -107,7 +117,19 @@ func BuildImageWithDocker(configuration *config.Configuration) error {
 	return nil
 }
 
-func SaveImageToFile(configuration *config.Configuration) (string, error) {
+func TagImage(configuration *config.Configuration, newTag string) error {
+	log.Default().Println("Tagging image:", configuration.ImageName, "as", newTag)
+	ctx := context.Background()
+	cli, err := GetClient(ctx)
+	if err != nil {
+		return err
+	}
+
+	err = cli.ImageTag(ctx, configuration.ImageName, newTag)
+	return err
+}
+
+func SaveImageToFile(configuration *config.Configuration, revision int32) (string, error) {
 	ctx := context.Background()
 	cli, err := GetClient(ctx)
 	if err != nil {
@@ -119,7 +141,11 @@ func SaveImageToFile(configuration *config.Configuration) (string, error) {
 		return "", err
 	}
 	defer outputFile.Close()
-	responseBody, err := cli.ImageSave(ctx, []string{configuration.ImageName})
+	imageName := configuration.ImageName
+	if revision > -1 {
+		imageName = imageName + fmt.Sprintf(":%d", revision)
+	}
+	responseBody, err := cli.ImageSave(ctx, []string{imageName})
 	if err != nil {
 		return "", err
 	}

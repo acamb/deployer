@@ -3,3 +3,4 @@ port: 7676
 name: test
 image_name: test
 private_key: /home/andrea/.ssh/id_ed25519
+enable_revisions: true

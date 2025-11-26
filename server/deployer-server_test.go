@@ -495,47 +495,74 @@ func TestSaveComposeFile(t *testing.T) {
 
 	testCases := []struct {
 		name          string
+		request       protocol.Request
 		containerName string
 		content       string
-		setupFunc     func(t *testing.T, containerName string)
+		setupFunc     func(t *testing.T, containerName string, revision string)
 		expectError   bool
 		errorMessage  string
 	}{
 		{
-			name:          "Valid compose file content",
+			name: "Valid compose file",
+			request: protocol.Request{
+				Name: "test-app",
+			},
 			containerName: "test-app",
 			content:       "version: '3'\\nservices:\\n  web:\\n    image: nginx",
-			setupFunc: func(t *testing.T, containerName string) {
+			setupFunc: func(t *testing.T, containerName string, revision string) {
 				err := os.MkdirAll(config.WorkingDirectory+"/"+containerName, 0770)
 				require.NoError(t, err)
 			},
 			expectError: false,
 		},
 		{
-			name:          "Empty content",
+			name: "Valid compose file and revision",
+			request: protocol.Request{
+				Name:     "test-app",
+				Revision: "1",
+			},
+			containerName: "test-app",
+			content:       "version: '3'\\nservices:\\n  web:\\n    image: nginx",
+			setupFunc: func(t *testing.T, containerName string, revision string) {
+				err := os.MkdirAll(config.WorkingDirectory+"/"+containerName+"/1", 0770)
+				require.NoError(t, err)
+			},
+			expectError: false,
+		},
+		{
+			name: "Empty file",
+			request: protocol.Request{
+				Name: "empty-app",
+			},
 			containerName: "empty-app",
 			content:       "",
-			setupFunc: func(t *testing.T, containerName string) {
+			setupFunc: func(t *testing.T, containerName string, revision string) {
 				err := os.MkdirAll(config.WorkingDirectory+"/"+containerName, 0770)
 				require.NoError(t, err)
 			},
 			expectError: false,
 		},
 		{
-			name:          "Large content",
+			name: "Large file",
+			request: protocol.Request{
+				Name: "large-app",
+			},
 			containerName: "large-app",
 			content:       strings.Repeat("# Large compose file\\n", 1000),
-			setupFunc: func(t *testing.T, containerName string) {
+			setupFunc: func(t *testing.T, containerName string, revision string) {
 				err := os.MkdirAll(config.WorkingDirectory+"/"+containerName, 0770)
 				require.NoError(t, err)
 			},
 			expectError: false,
 		},
 		{
-			name:          "Container directory missing",
+			name: "Missing container directory",
+			request: protocol.Request{
+				Name: "missing-dir",
+			},
 			containerName: "missing-dir",
 			content:       "version: '3'",
-			setupFunc:     func(t *testing.T, containerName string) {},
+			setupFunc:     func(t *testing.T, containerName string, revision string) {},
 			expectError:   true,
 			errorMessage:  "Error opening file",
 		},
@@ -543,9 +570,9 @@ func TestSaveComposeFile(t *testing.T) {
 
 	for _, tc := range testCases {
 		t.Run(tc.name, func(t *testing.T) {
-			tc.setupFunc(t, tc.containerName)
+			tc.setupFunc(t, tc.containerName, tc.request.Revision)
 
-			err := saveComposeFile(tc.containerName, tc.content)
+			err := saveComposeFile(tc.request, tc.content)
 
 			if tc.expectError {
 				assert.Error(t, err)
@@ -556,7 +583,11 @@ func TestSaveComposeFile(t *testing.T) {
 				assert.NoError(t, err)
 
 				// Verify file was created with correct content
-				filePath := config.WorkingDirectory + "/" + tc.containerName + "/docker-compose.yml"
+				filePath := config.WorkingDirectory + "/" + tc.containerName + "/"
+				if tc.request.Revision != "" {
+					filePath += tc.request.Revision + "/"
+				}
+				filePath += "docker-compose.yml"
 				savedContent, readErr := os.ReadFile(filePath)
 				assert.NoError(t, readErr)
 				assert.Equal(t, tc.content, string(savedContent))
@@ -653,13 +684,17 @@ func TestStopContainer(t *testing.T) {
 
 	testCases := []struct {
 		name          string
+		request       protocol.Request
 		containerName string
 		setupFunc     func(t *testing.T, containerName string)
 		expectError   bool
 		errorMessage  string
 	}{
 		{
-			name:          "Valid container directory",
+			name: "Valid container directory",
+			request: protocol.Request{
+				Name: "test-app",
+			},
 			containerName: "test-app",
 			setupFunc: func(t *testing.T, containerName string) {
 				err := os.MkdirAll(config.WorkingDirectory+"/"+containerName, 0770)
@@ -669,7 +704,10 @@ func TestStopContainer(t *testing.T) {
 			errorMessage: "Error stopping container: exit status 1. Output: no configuration file provided: not found",
 		},
 		{
-			name:          "Missing container directory",
+			name: "Missing container directory",
+			request: protocol.Request{
+				Name: "missing-app",
+			},
 			containerName: "missing-app",
 			setupFunc:     func(t *testing.T, containerName string) {},
 			expectError:   true,
@@ -680,7 +718,7 @@ func TestStopContainer(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			tc.setupFunc(t, tc.containerName)
 
-			err := stopContainer(tc.containerName)
+			err := stopContainer(tc.request)
 
 			if tc.expectError {
 				assert.Error(t, err)
@@ -786,6 +824,7 @@ func TestStartContainer(t *testing.T) {
 
 	testCases := []struct {
 		name          string
+		request       protocol.Request
 		containerName string
 		composeFile   string
 		setupFunc     func(t *testing.T, containerName string)
@@ -793,13 +832,16 @@ func TestStartContainer(t *testing.T) {
 		errorMessage  string
 	}{
 		{
-			name:          "Valid container with compose content",
-			containerName: "test-app",
-			composeFile: `
+			name: "Valid container with compose content",
+			request: protocol.Request{
+				Name: "not-exists",
+				ComposeFile: []byte(`
 services:
   test:
     image: not-exists
-`,
+`),
+			},
+			containerName: "not-exists",
 			setupFunc: func(t *testing.T, containerName string) {
 				err := os.MkdirAll(config.WorkingDirectory+"/"+containerName, 0770)
 				require.NoError(t, err)
@@ -808,9 +850,31 @@ services:
 			errorMessage: "Error pull access denied for not-exists",
 		},
 		{
-			name:          "Empty compose file",
+			name: "Valid container with compose content and invalid revision",
+			request: protocol.Request{
+				Name: "not-exists",
+				ComposeFile: []byte(`
+services:
+  test:
+    image: not-exists
+`),
+				Revision: "42",
+			},
+			containerName: "not-exists",
+			setupFunc: func(t *testing.T, containerName string) {
+				err := os.MkdirAll(config.WorkingDirectory+"/"+containerName, 0770)
+				require.NoError(t, err)
+			},
+			expectError:  true, // if this fails with the specified error it's ok
+			errorMessage: "no such file or directory",
+		},
+		{
+			name: "Empty compose file",
+			request: protocol.Request{
+				Name:        "empty-compose",
+				ComposeFile: []byte(""),
+			},
 			containerName: "empty-compose",
-			composeFile:   "",
 			setupFunc: func(t *testing.T, containerName string) {
 				err := os.MkdirAll(config.WorkingDirectory+"/"+containerName, 0770)
 				require.NoError(t, err)
@@ -819,9 +883,12 @@ services:
 			errorMessage: "no configuration file provided",
 		},
 		{
-			name:          "Missing container directory",
+			name: "missing-dir",
+			request: protocol.Request{
+				Name:        "missing-dir",
+				ComposeFile: []byte("version: '3'"),
+			},
 			containerName: "missing-dir",
-			composeFile:   "version: '3'",
 			setupFunc:     func(t *testing.T, containerName string) {},
 			expectError:   true,
 			errorMessage:  "no such file or directory",
@@ -832,7 +899,7 @@ services:
 		t.Run(tc.name, func(t *testing.T) {
 			tc.setupFunc(t, tc.containerName)
 
-			err := startContainer(tc.containerName, tc.composeFile)
+			err := startContainer(tc.request)
 
 			if tc.expectError {
 				assert.Error(t, err)

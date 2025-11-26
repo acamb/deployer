@@ -133,7 +133,7 @@ func TestStartContainer(t *testing.T) {
 	mockChannel.Write(responseData)
 
 	// Call the function
-	err = StartContainer("test-container")
+	err = StartContainer("test-container", -1)
 	assert.NoError(t, err)
 }
 
@@ -152,7 +152,7 @@ func TestStopContainer(t *testing.T) {
 	// Setup mock to return this response
 	mockChannel.Write(responseBuffer.Bytes())
 
-	err = StopContainer("test-container")
+	err = StopContainer("test-container", -1)
 	assert.NoError(t, err)
 }
 
@@ -170,7 +170,7 @@ func TestRestartContainer(t *testing.T) {
 
 	mockChannel.Write(responseBuffer.Bytes())
 
-	err = RestartContainer("test-container")
+	err = RestartContainer("test-container", -1)
 	assert.NoError(t, err)
 }
 
@@ -188,7 +188,7 @@ func TestContainerError(t *testing.T) {
 
 	mockChannel.Write(responseBuffer.Bytes())
 
-	err = StartContainer("nonexistent-container")
+	err = StartContainer("nonexistent-container", -1)
 	assert.Error(t, err)
 	assert.Contains(t, err.Error(), "Container not found")
 }
@@ -224,7 +224,7 @@ func TestDeployImage(t *testing.T) {
 
 	mockChannel.Write(responseBuffer.Bytes())
 
-	err = DeployImage("test-app", tarFile, composeFileHandle)
+	err = DeployImage("test-app", tarFile, composeFileHandle, -1)
 	assert.NoError(t, err)
 }
 
@@ -248,7 +248,7 @@ func TestLogsStreaming(t *testing.T) {
 
 	mockChannel.Write(responseBuffer.Bytes())
 
-	logChan, err := Logs("test-container")
+	logChan, err := Logs("test-container", -1)
 	require.NoError(t, err)
 	assert.NotNil(t, logChan)
 
@@ -294,7 +294,7 @@ func TestHandleRequestEncoding(t *testing.T) {
 	mockChannel.Write(responseBuffer.Bytes())
 
 	// Call handleRequest directly
-	err = handleRequest("test-container", protocol.Deploy, tarFile, composeFileHandle)
+	err = handleRequest("test-container", protocol.Deploy, tarFile, composeFileHandle, -1)
 	assert.NoError(t, err)
 }
 
@@ -318,7 +318,7 @@ func TestConnectionFailure(t *testing.T) {
 
 	// This should panic or fail gracefully depending on implementation
 	assert.Panics(t, func() {
-		StartContainer("test")
+		StartContainer("test", -1)
 	})
 }
 
@@ -351,7 +351,7 @@ func BenchmarkStartContainer(b *testing.B) {
 
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		err := StartContainer("benchmark-container")
+		err := StartContainer("benchmark-container", -1)
 		require.NoError(b, err)
 	}
 }

@@ -8,6 +8,7 @@ const (
 	Start
 	Restart
 	Logs
+	Revisions
 )
 
 func (c Command) String() string {
@@ -22,6 +23,8 @@ func (c Command) String() string {
 		return "Restart"
 	case Logs:
 		return "Logs"
+	case Revisions:
+		return "Revisions"
 	default:
 		return "Unknown Command"
 	}
@@ -51,6 +54,7 @@ type Request struct {
 	Name        string
 	TarSize     int64
 	ComposeFile []byte
+	Revision    string
 }
 
 func (r Request) String() string {
@@ -60,6 +64,10 @@ func (r Request) String() string {
 type Response struct {
 	Status  Status
 	Message string
+}
+
+type RevisionsDetails struct {
+	Revisions []string `json:"revisions"`
 }
 
 func (r Response) String() string {

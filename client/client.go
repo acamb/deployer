@@ -8,6 +8,7 @@ import (
 	"deployer/client/version"
 	"deployer/protocol"
 	"encoding/gob"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -57,30 +58,34 @@ func Connect(configuration config.Configuration) error {
 	return nil
 }
 
-func StartContainer(name string) error {
-	return handleSimpleRequest(name, protocol.Start)
+func StartContainer(name string, revision int32) error {
+	return handleSimpleRequest(name, protocol.Start, revision)
 }
 
-func StopContainer(name string) error {
-	return handleSimpleRequest(name, protocol.Stop)
+func StopContainer(name string, revision int32) error {
+	return handleSimpleRequest(name, protocol.Stop, revision)
 }
 
-func RestartContainer(name string) error {
-	return handleSimpleRequest(name, protocol.Restart)
+func RestartContainer(name string, revision int32) error {
+	return handleSimpleRequest(name, protocol.Restart, revision)
 }
 
-func DeployImage(name string, tarFilePath string, composeFile *os.File) error {
+func DeployImage(name string, tarFilePath string, composeFile *os.File, revision int32) error {
 	return handleRequest(
 		name,
 		protocol.Deploy,
 		tarFilePath,
-		composeFile)
+		composeFile,
+		revision)
 }
 
-func Logs(name string) (<-chan string, error) {
+func Logs(name string, revision int32) (<-chan string, error) {
 	request := protocol.Request{
 		Name:    name,
 		Command: protocol.Logs,
+	}
+	if revision > -1 {
+		request.Revision = fmt.Sprint(revision)
 	}
 	if err := encoder.Encode(&request); err != nil {
 		return nil, err
@@ -107,17 +112,43 @@ func Logs(name string) (<-chan string, error) {
 	return logChan, nil
 }
 
-func handleSimpleRequest(name string, req protocol.Command) error {
-	return handleRequest(name, req, "", nil)
+func Revisions(name string) ([]string, error) {
+	request := protocol.Request{
+		Name:    name,
+		Command: protocol.Revisions,
+	}
+	if err := encoder.Encode(&request); err != nil {
+		return nil, err
+	}
+	response := protocol.Response{}
+	if err := decoder.Decode(&response); err != nil {
+		return nil, err
+	}
+	if response.Status != protocol.Ok {
+		return nil, errors.New(response.Message)
+	}
+	revisions := protocol.RevisionsDetails{}
+	err := json.Unmarshal([]byte(response.Message), &revisions)
+	if err != nil {
+		return nil, err
+	}
+	return revisions.Revisions, nil
 }
 
-func handleRequest(name string, req protocol.Command, tarFilePath string, composeFile *os.File) error {
+func handleSimpleRequest(name string, req protocol.Command, revision int32) error {
+	return handleRequest(name, req, "", nil, revision)
+}
+
+func handleRequest(name string, req protocol.Command, tarFilePath string, composeFile *os.File, revision int32) error {
 	var err error
 	tarFile, err := os.Open(tarFilePath)
 	request := protocol.Request{
 		Version: version.Version,
 		Name:    name,
 		Command: req,
+	}
+	if revision > -1 {
+		request.Revision = fmt.Sprint(revision)
 	}
 
 	if tarFile != nil {

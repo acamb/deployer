@@ -1,5 +1,6 @@
 services:
   docker:
+    container_name: docker
     image: docker:dind
     privileged: true
     environment:

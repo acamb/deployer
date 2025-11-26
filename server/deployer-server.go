@@ -8,6 +8,7 @@ import (
 	serverConfig "deployer/server/config"
 	"deployer/server/version"
 	"encoding/gob"
+	"encoding/json"
 	"errors"
 	"flag"
 	"fmt"
@@ -22,6 +23,7 @@ import (
 	"time"
 
 	"golang.org/x/crypto/ssh"
+	"gopkg.in/yaml.v3"
 )
 
 var config *serverConfig.ServerConfiguration
@@ -116,7 +118,7 @@ func handleRequest(dataChannel ssh.Channel) {
 	}
 
 	if request.Command == protocol.Stop {
-		err := stopContainer(request.Name)
+		err := stopContainer(request)
 		if err != nil {
 			_ = handleResponse("Error stopping container: "+err.Error(), protocol.Ko, encoder)
 			log.Printf("Error stopping container %s: %v", request.Name, err)
@@ -126,7 +128,7 @@ func handleRequest(dataChannel ssh.Channel) {
 			return
 		}
 	} else if request.Command == protocol.Start {
-		err := startContainer(request.Name, string(request.ComposeFile))
+		err := startContainer(request)
 		if err != nil {
 			_ = handleResponse("Error starting container: "+err.Error(), protocol.Ko, encoder)
 			log.Printf("Error starting container %s: %v", request.Name, err)
@@ -154,7 +156,7 @@ func handleRequest(dataChannel ssh.Channel) {
 			return
 		}
 
-		if err := os.Mkdir(config.WorkingDirectory+"/"+request.Name, 0770); err != nil && !os.IsExist(err) {
+		if err := os.Mkdir(getWorkingDirectory(request), 0770); err != nil && !os.IsExist(err) {
 			log.Printf("Terminating deployment due to directory creation error: %v", err)
 			_ = handleResponse(fmt.Sprintf("Error creating directory for container: %v", err), protocol.Ko, encoder)
 			return
@@ -168,30 +170,30 @@ func handleRequest(dataChannel ssh.Channel) {
 			}
 		}
 
-		if err = saveComposeFile(request.Name, composeFile); err != nil {
+		if err = saveComposeFile(request, composeFile); err != nil {
 			_ = handleResponse(fmt.Sprintf("Error saving compose file: %v", err), protocol.Ko, encoder)
 			log.Printf("Error saving compose file for container %s: %v", request.Name, err)
 			return
 		}
 
-		if err = stopContainer(request.Name); err != nil {
+		if err = stopContainer(request); err != nil {
 			_ = handleResponse(fmt.Sprintf("Error stopping container: %v", err), protocol.Ko, encoder)
 			log.Printf("Error stopping container %s: %v", request.Name, err)
 			return
 		}
-		if err = startContainer(request.Name, string(request.ComposeFile)); err != nil {
+		if err = startContainer(request); err != nil {
 			_ = handleResponse(fmt.Sprintf("Error starting container: %v", err), protocol.Ko, encoder)
 			log.Printf("Error starting container %s: %v", request.Name, err)
 			return
 		}
 		_ = handleResponse(fmt.Sprintf("Container started successfully"), protocol.Ok, encoder)
 	} else if request.Command == protocol.Restart {
-		if err := stopContainer(request.Name); err != nil {
+		if err := stopContainer(request); err != nil {
 			_ = handleResponse(fmt.Sprintf("Error stopping container: %v", err), protocol.Ko, encoder)
 			log.Printf("Error stopping container %s: %v", request.Name, err)
 			return
 		}
-		if err := startContainer(request.Name, string(request.ComposeFile)); err != nil {
+		if err := startContainer(request); err != nil {
 			_ = handleResponse(fmt.Sprintf("Error starting container: %v", err), protocol.Ko, encoder)
 			log.Printf("Error starting container %s: %v", request.Name, err)
 			return
@@ -222,11 +224,50 @@ func handleRequest(dataChannel ssh.Channel) {
 			_ = handleResponse("Fine log", protocol.Ok, encoder)
 			return
 		}
+	} else if request.Command == protocol.Revisions {
+		revisions, err := getRunningRevisions(request.Name)
+		if err != nil {
+			_ = handleResponse(fmt.Sprintf("Error retrieving revisions: %v", err), protocol.Ko, encoder)
+			log.Printf("Error retrieving revisions for container %s: %v", request.Name, err)
+			return
+		} else {
+			message, err := json.Marshal(protocol.RevisionsDetails{
+				Revisions: revisions,
+			})
+			if err != nil {
+				_ = handleResponse(fmt.Sprintf("Error preparing revisions response: %v", err), protocol.Ko, encoder)
+				log.Printf("Error preparing revisions response for container %s: %v", request.Name, err)
+				return
+			}
+			handleResponse(string(message), protocol.Ok, encoder)
+			return
+		}
 	} else {
 		_ = handleResponse(fmt.Sprintf("Unknown command: %v", request.Command), protocol.Ko, encoder)
 		log.Printf("Unknown request received: %v", request.String())
 		return
 	}
+}
+
+func getRunningRevisions(name string) ([]string, error) {
+	cmd := exec.Command("docker", "ps", "--filter", "name=^"+name, "--format", "{{.ID}} {{.Names}}")
+	cmd.Dir = config.WorkingDirectory + "/" + name
+	output, err := cmd.CombinedOutput()
+	if err != nil {
+		return nil, errors.New("Error retrieving running containers: " + err.Error() + ". Output: " + string(output))
+	}
+	var revisions []string
+	lines := strings.Split(string(output), "\n")
+	for _, line := range lines {
+		line = strings.TrimSpace(line)
+		if line != "" {
+			parts := strings.SplitN(line, " ", 2)
+			if len(parts) == 2 {
+				revisions = append(revisions, parts[1])
+			}
+		}
+	}
+	return revisions, nil
 }
 
 func handleSSHConnection(conn net.Conn, sshConfig *ssh.ServerConfig) (ssh.Channel, *ssh.ServerConn, error) {
@@ -272,15 +313,38 @@ func handleSSHConnection(conn net.Conn, sshConfig *ssh.ServerConfig) (ssh.Channe
 	return dataChannel, sshConn, nil
 }
 
-func saveComposeFile(name string, fileContent string) error {
-	var filePath = config.WorkingDirectory + "/" + name + "/docker-compose.yml"
+func saveComposeFile(request protocol.Request, fileContent string) error {
+	var filePath = getWorkingDirectory(request) + "/docker-compose.yml"
 	os.Remove(filePath)
-	file, err := os.OpenFile(config.WorkingDirectory+"/"+name+"/docker-compose.yml", os.O_WRONLY|os.O_CREATE, 0600)
+	file, err := os.OpenFile(filePath, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0600)
 	if err != nil {
 		return errors.New("Error opening file for writing: " + err.Error())
 	}
 	defer file.Close()
-	if _, err := file.WriteString(fileContent); err != nil {
+
+	var doc map[string]interface{}
+	if err := yaml.Unmarshal([]byte(fileContent), &doc); err != nil {
+		return errors.New("Error parsing compose file content: " + err.Error())
+	}
+
+	if request.Revision != "" {
+		if services, ok := doc["services"].(map[string]interface{}); ok {
+			if svc, ok := services[request.Name].(map[string]interface{}); ok {
+				if img, ok := svc["image"].(string); ok && img != "" {
+					if !strings.Contains(img, ":") {
+						svc["image"] = img + ":" + request.Revision
+					}
+				}
+			}
+		}
+	}
+
+	out, err := yaml.Marshal(doc)
+	if err != nil {
+		return fmt.Errorf("Error serializing compose file: %v", err)
+	}
+
+	if _, err := file.Write(out); err != nil {
 		return errors.New("Error writing to file: " + err.Error())
 	}
 	return nil
@@ -306,9 +370,9 @@ func receiveStreamedTar(dataChannel ssh.Channel, name string, tarSize int64) (st
 	return tarFile.Name(), nil
 }
 
-func stopContainer(name string) error {
+func stopContainer(request protocol.Request) error {
 	cmd := exec.Command("docker", "compose", "down")
-	cmd.Dir = config.WorkingDirectory + "/" + name
+	cmd.Dir = getWorkingDirectory(request)
 	output, err := cmd.CombinedOutput()
 	if err != nil {
 		return errors.New("Error stopping container: " + err.Error() + ". Output: " + string(output))
@@ -316,21 +380,14 @@ func stopContainer(name string) error {
 	return nil
 }
 
-func startContainer(name string, composeFile string) error {
-	if composeFile != "" {
-		composeFilePath := config.WorkingDirectory + "/" + name + "/docker-compose.yml"
-		file, err := os.OpenFile(composeFilePath, os.O_WRONLY|os.O_CREATE, 0600)
-		defer file.Close()
-		if err != nil {
-			return errors.New("Error opening file " + composeFilePath + ": " + err.Error())
-		}
-		_, err = file.WriteString(composeFile)
-		if err != nil {
-			return errors.New("Error writing to file " + composeFilePath + ": " + err.Error())
-		}
+func startContainer(request protocol.Request) error {
+	composeFile := string(request.ComposeFile)
+	err := saveComposeFile(request, composeFile)
+	if err != nil {
+		return err
 	}
 	cmd := exec.Command("docker", "compose", "up", "-d")
-	cmd.Dir = config.WorkingDirectory + "/" + name
+	cmd.Dir = getWorkingDirectory(request)
 	output, err := cmd.CombinedOutput()
 	if err != nil {
 		return errors.New("Error starting container: " + err.Error() + ". Output: " + string(output))
@@ -424,4 +481,12 @@ func loadHostKey(configuration *serverConfig.ServerConfiguration) (ssh.Signer, e
 
 	log.Printf("Loaded host key from %s", keyPath)
 	return signer, nil
+}
+
+func getWorkingDirectory(request protocol.Request) string {
+	dir := config.WorkingDirectory + "/" + request.Name
+	if request.Revision != "" {
+		dir += "/" + request.Revision
+	}
+	return dir
 }

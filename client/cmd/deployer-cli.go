@@ -5,15 +5,19 @@ import (
 	"deployer/client"
 	"deployer/client/config"
 	"deployer/client/version"
-	"github.com/spf13/cobra"
+	"fmt"
 	"log"
 	"os"
+
+	"github.com/spf13/cobra"
 )
 
 func main() {
 	var filePath string
 	var configuration *config.Configuration
 	var err error
+	var revision *int32
+	var newRevision *bool
 	rootCmd := &cobra.Command{
 		Use:     "deployer-client",
 		Version: version.Version,
@@ -22,11 +26,20 @@ func main() {
 
 	rootCmd.PersistentFlags().StringVarP(&filePath, "file", "f", "", "configuration file path")
 
+	revision = rootCmd.PersistentFlags().Int32("revision", -1, "Set revision to use")
+
 	rootCmd.PersistentPreRun = func(cmd *cobra.Command, args []string) {
 		if cmd.Use != "config" {
 			configuration, err = config.ReadConfiguration(filePath)
 			if err != nil {
 				log.Fatalf("Error reading configuration: %v", err)
+			}
+			if configuration.EnableRevisions && *revision == -1 {
+				rev, err := readCurrentRevision()
+				if err != nil {
+					log.Fatalf("Error reading current revision: %v", err)
+				}
+				revision = &rev
 			}
 		}
 	}
@@ -47,7 +60,7 @@ func main() {
 		Use:   "build",
 		Short: "Build Docker image locally",
 		Run: func(cmd *cobra.Command, args []string) {
-			err = builder.BuildImage(configuration)
+			err = builder.BuildImage(configuration, *revision)
 			if err != nil {
 				log.Fatalf("Error building image: %v", err)
 			}
@@ -59,7 +72,7 @@ func main() {
 		Use:   "export",
 		Short: "Export Docker image to .tar file",
 		Run: func(cmd *cobra.Command, args []string) {
-			file, err := builder.SaveImageToFile(configuration)
+			file, err := builder.SaveImageToFile(configuration, *revision)
 			if err != nil {
 				log.Fatalf("Error saving image to file: %v", err)
 			} else {
@@ -74,7 +87,7 @@ func main() {
 		Run: func(cmd *cobra.Command, args []string) {
 			Connect(configuration)
 			log.Default().Println("Starting remote container...")
-			if err := client.StartContainer(configuration.Name); err != nil {
+			if err := client.StartContainer(configuration.Name, *revision); err != nil {
 				log.Fatalf("Error starting container: %v", err)
 			} else {
 				log.Println("Container started successfully")
@@ -87,9 +100,10 @@ func main() {
 		Use:   "stop",
 		Short: "Stop the remote container",
 		Run: func(cmd *cobra.Command, args []string) {
+			//TODO deleteFiles flag
 			Connect(configuration)
 			log.Default().Println("Stopping remote container...")
-			if err := client.StopContainer(configuration.Name); err != nil {
+			if err := client.StopContainer(configuration.Name, *revision); err != nil {
 				log.Fatalf("Error stopping container: %v", err)
 			} else {
 				log.Println("Container stopped successfully")
@@ -104,7 +118,7 @@ func main() {
 		Run: func(cmd *cobra.Command, args []string) {
 			Connect(configuration)
 			log.Default().Println("Restarting remote container...")
-			if err := client.RestartContainer(configuration.Name); err != nil {
+			if err := client.RestartContainer(configuration.Name, *revision); err != nil {
 				log.Fatalf("Error restarting container: %v", err)
 			} else {
 				log.Println("Container restarting successfully")
@@ -113,26 +127,48 @@ func main() {
 		},
 	})
 
-	rootCmd.AddCommand(&cobra.Command{
+	deployCmd := &cobra.Command{
 		Use:   "deploy",
 		Short: "Deploy and starts the remote container",
 		Run: func(cmd *cobra.Command, args []string) {
 			Connect(configuration)
-			if err := DeployImage(configuration); err != nil {
+			var rev int32
+			rev = -1
+			if configuration.EnableRevisions {
+				rev = *revision
+			}
+			if *newRevision {
+				if !configuration.EnableRevisions {
+					log.Fatalf("Cannot create new revision when revisions are disabled in configuration, please set enable_revisions: true in config file")
+				}
+				rev, err = readCurrentRevision()
+				rev++
+				if err != nil {
+					log.Fatalf("Error reading current revision: %v", err)
+				}
+			}
+			if err := DeployImage(configuration, rev); err != nil {
 				log.Fatalf("Error deploying container: %v", err)
 			} else {
 				log.Println("Container deployed successfully")
 			}
-
+			if *newRevision {
+				err = writeRevisionToFile(rev)
+				if err != nil {
+					log.Fatalf("Error writing revision '%d' to file: %v", rev, err)
+				}
+			}
 		},
-	})
+	}
+	newRevision = deployCmd.Flags().BoolP("new-revision", "n", false, "Create a new revision for this deployment")
+	rootCmd.AddCommand(deployCmd)
 
 	rootCmd.AddCommand(&cobra.Command{
 		Use:   "logs",
 		Short: "Prints the logs of the remote container",
 		Run: func(cmd *cobra.Command, args []string) {
 			Connect(configuration)
-			channel, err := client.Logs(configuration.Name)
+			channel, err := client.Logs(configuration.Name, *revision)
 			if err != nil {
 				log.Fatalf("Error reading logs for container: %v", err)
 			}
@@ -150,6 +186,21 @@ func main() {
 
 		},
 	})
+
+	rootCmd.AddCommand(&cobra.Command{
+		Use:   "revisions",
+		Short: "List the revisions running on the remote container",
+		Run: func(cmd *cobra.Command, args []string) {
+			Connect(configuration)
+			revisions, err := client.Revisions(configuration.Name)
+			if err != nil {
+				log.Fatalf("Error getting revisions for container: %v", err)
+			}
+			for _, revision := range revisions {
+				log.Println(" - ", revision)
+			}
+		},
+	})
 	if err := rootCmd.Execute(); err != nil {
 		log.Fatalf("Error executing command: %v", err)
 	}
@@ -162,13 +213,13 @@ func Connect(configuration *config.Configuration) {
 	}
 }
 
-func DeployImage(configuration *config.Configuration) error {
+func DeployImage(configuration *config.Configuration, revision int32) error {
 
-	if err := builder.BuildImage(configuration); err != nil {
+	if err := builder.BuildImage(configuration, revision); err != nil {
 		return err
 	}
 	log.Default().Println("Preparing docker image transfer...")
-	outputFile, err := builder.SaveImageToFile(configuration)
+	outputFile, err := builder.SaveImageToFile(configuration, revision)
 	if err != nil {
 		return err
 	}
@@ -182,8 +233,29 @@ func DeployImage(configuration *config.Configuration) error {
 	if err := client.DeployImage(
 		configuration.Name,
 		outputFile,
-		composeFile); err != nil {
+		composeFile,
+		revision); err != nil {
 		return err
 	}
 	return nil
+}
+
+func readCurrentRevision() (int32, error) {
+	rev, err := os.ReadFile("REVISION")
+	if os.IsNotExist(err) {
+		return 0, nil
+	}
+	if err != nil {
+		return -1, err
+	}
+	var revision int32
+	_, err = fmt.Sscanf(string(rev), "%d", &revision)
+	if err != nil {
+		return -1, err
+	}
+	return revision, nil
+}
+
+func writeRevisionToFile(revision int32) error {
+	return os.WriteFile("REVISION", []byte(fmt.Sprint(revision)), 0644)
 }

@@ -3,6 +3,7 @@ package config
 import (
 	"fmt"
 	"io"
+	"log"
 	"os"
 	"strings"
 
@@ -31,13 +32,14 @@ func (b *BuildMethod) UnmarshalYAML(unmarshal func(interface{}) error) error {
 }
 
 type Configuration struct {
-	Host        string      `yaml:"host"`
-	Port        int         `yaml:"port"`
-	Name        string      `yaml:"name"`
-	ImageName   string      `yaml:"image_name"`
-	PrivateKey  string      `yaml:"private_key"`
-	ComposePath string      `yaml:"compose_file_path"`
-	BuildMethod BuildMethod `yaml:"build_method"`
+	Host            string      `yaml:"host"`
+	Port            int         `yaml:"port"`
+	Name            string      `yaml:"name"`
+	ImageName       string      `yaml:"image_name"`
+	PrivateKey      string      `yaml:"private_key"`
+	ComposePath     string      `yaml:"compose_file_path"`
+	BuildMethod     BuildMethod `yaml:"build_method"`
+	EnableRevisions bool        `yaml:"enable_revisions"`
 }
 
 func ReadConfiguration(filePath string) (*Configuration, error) {
@@ -61,8 +63,10 @@ func ReadConfiguration(filePath string) (*Configuration, error) {
 		config.ImageName = config.Name
 	}
 
-	if !strings.Contains(config.ImageName, ":") {
+	if !strings.Contains(config.ImageName, ":") && !config.EnableRevisions {
 		config.ImageName += ":latest"
+	} else if strings.Contains(config.ImageName, ":") && config.EnableRevisions {
+		log.Fatal("Error: enable_revisions cannot be true when image_name contains a tag. Please remove the tag from image_name.")
 	}
 
 	return config, nil
@@ -99,6 +103,8 @@ image_name: myapp:latest
 ##build_method values: 'docker' or 'compose'.
 ##If not set, it will use 'docker' when Dockerfile is present, otherwise 'compose'.
 #build_method: 'docker'
+#enable_revisions will manage different revisions for the same project, useful for zero-downtime deployments and rollbacks.
+#enable_revisions: true
 `))
 	return err
 }
