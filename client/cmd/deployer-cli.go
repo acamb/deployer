@@ -144,6 +144,7 @@ func main() {
 				if !configuration.EnableRevisions {
 					log.Fatalf("Cannot create new revision when revisions are disabled in configuration, please set enable_revisions: true in config file")
 				}
+				CheckComposeFileForServiceNameCoherence(configuration)
 				rev, err = readCurrentRevision()
 				rev++
 				if err != nil {
