@@ -47,13 +47,22 @@ func (pt *ProgressTracker) printProgress() {
 	if elapsed <= 0 {
 		elapsed = 1
 	}
-	speed := float64(done/(1024*1024)) / float64(elapsed)
+	speedInMB := float64(done/(1024*1024)) / float64(elapsed)
+	speed := float64(done) / float64(elapsed)
 	remainingBytes := total - done
 	var etaSec int
 	if speed > 0 {
 		etaSec = int(float64(remainingBytes) / speed)
 	}
-	fmt.Printf("\r\033[KProgress: %3.0f%%  Speed: %0.0f MB/s  Remaining: %ds", percentage, speed, etaSec)
+	remainingStr := fmt.Sprintf("%ds", etaSec)
+	if etaSec > 60 {
+		h := etaSec / 3600
+		m := (etaSec % 3600) / 60
+		s := etaSec % 60
+		remainingStr = fmt.Sprintf("%02d:%02d:%02d", h, m, s)
+	}
+
+	fmt.Printf("\r\033[KProgress: %3.0f%%  Speed: %0.0f MB/s  Remaining: %s", percentage, speedInMB, remainingStr)
 }
 
 func (pt *ProgressTracker) printFinal() {
