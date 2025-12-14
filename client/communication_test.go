@@ -224,7 +224,7 @@ func TestDeployImage(t *testing.T) {
 
 	mockChannel.Write(responseBuffer.Bytes())
 
-	err = DeployImage("test-app", tarFile, composeFileHandle, -1)
+	err = DeployImage("test-app", tarFile, composeFileHandle, -1, false)
 	assert.NoError(t, err)
 }
 
@@ -294,7 +294,7 @@ func TestHandleRequestEncoding(t *testing.T) {
 	mockChannel.Write(responseBuffer.Bytes())
 
 	// Call handleRequest directly
-	err = handleRequest("test-container", protocol.Deploy, tarFile, composeFileHandle, -1, false)
+	err = handleRequest("test-container", protocol.Deploy, tarFile, composeFileHandle, -1, false, false)
 	assert.NoError(t, err)
 }
 

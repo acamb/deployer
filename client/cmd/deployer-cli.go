@@ -18,6 +18,7 @@ func main() {
 	var err error
 	var revision *int32
 	var newRevision *bool
+	var prune *bool
 	var deleteFiles *bool
 	rootCmd := &cobra.Command{
 		Use:     "deployer-client",
@@ -151,7 +152,7 @@ func main() {
 					log.Fatalf("Error reading current revision: %v", err)
 				}
 			}
-			if err := DeployImage(configuration, rev); err != nil {
+			if err := DeployImage(configuration, rev, *prune); err != nil {
 				log.Fatalf("Error deploying container: %v", err)
 			} else {
 				log.Println("Container deployed successfully")
@@ -165,6 +166,7 @@ func main() {
 		},
 	}
 	newRevision = deployCmd.Flags().BoolP("new-revision", "n", false, "Create a new revision for this deployment")
+	prune := deployCmd.Flags().BoolP("prune", "p", false, "run docker image prune after deployment")
 	rootCmd.AddCommand(deployCmd)
 
 	rootCmd.AddCommand(&cobra.Command{
@@ -217,7 +219,7 @@ func Connect(configuration *config.Configuration) {
 	}
 }
 
-func DeployImage(configuration *config.Configuration, revision int32) error {
+func DeployImage(configuration *config.Configuration, revision int32, prune bool) error {
 
 	if err := builder.BuildImage(configuration, revision); err != nil {
 		return err
@@ -238,7 +240,8 @@ func DeployImage(configuration *config.Configuration, revision int32) error {
 		configuration.Name,
 		outputFile,
 		composeFile,
-		revision); err != nil {
+		revision,
+		prune); err != nil {
 		return err
 	}
 	return nil

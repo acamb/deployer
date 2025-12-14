@@ -56,6 +56,7 @@ type Request struct {
 	ComposeFile []byte
 	Revision    string
 	DeleteFiles bool
+	Prune       bool
 }
 
 func (r Request) String() string {

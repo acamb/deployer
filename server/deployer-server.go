@@ -187,6 +187,13 @@ func handleRequest(dataChannel ssh.Channel) {
 			log.Printf("Error starting container %s: %v", request.Name, err)
 			return
 		}
+		if request.Prune {
+			cmd := exec.Command("docker", "image", "prune", "-f")
+			output, err := cmd.CombinedOutput()
+			if err != nil {
+				log.Printf("Error pruning images: %v. Output: %s", err, string(output))
+			}
+		}
 		_ = handleResponse(fmt.Sprintf("Container started successfully"), protocol.Ok, encoder)
 	} else if request.Command == protocol.Restart {
 		if err := stopContainer(request); err != nil {

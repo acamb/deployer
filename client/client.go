@@ -70,14 +70,15 @@ func RestartContainer(name string, revision int32) error {
 	return handleSimpleRequest(name, protocol.Restart, revision, false)
 }
 
-func DeployImage(name string, tarFilePath string, composeFile *os.File, revision int32) error {
+func DeployImage(name string, tarFilePath string, composeFile *os.File, revision int32, prune bool) error {
 	return handleRequest(
 		name,
 		protocol.Deploy,
 		tarFilePath,
 		composeFile,
 		revision,
-		false)
+		false,
+		prune)
 }
 
 func Logs(name string, revision int32) (<-chan string, error) {
@@ -139,16 +140,23 @@ func Revisions(name string) ([]string, error) {
 }
 
 func handleSimpleRequest(name string, req protocol.Command, revision int32, deleteFiles bool) error {
-	return handleRequest(name, req, "", nil, revision, deleteFiles)
+	return handleRequest(name, req, "", nil, revision, deleteFiles, false)
 }
 
-func handleRequest(name string, req protocol.Command, tarFilePath string, composeFile *os.File, revision int32, deleteFiles bool) error {
+func handleRequest(name string,
+	req protocol.Command,
+	tarFilePath string,
+	composeFile *os.File,
+	revision int32,
+	deleteFiles bool,
+	prune bool) error {
 	var err error
 	tarFile, err := os.Open(tarFilePath)
 	request := protocol.Request{
 		Version: version.Version,
 		Name:    name,
 		Command: req,
+		Prune:   prune,
 	}
 	if revision > -1 {
 		request.Revision = fmt.Sprint(revision)
