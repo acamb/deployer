@@ -3,7 +3,6 @@ package builder
 import (
 	"context"
 	"deployer/client/config"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -13,6 +12,7 @@ import (
 
 	"github.com/docker/docker/api/types/build"
 	"github.com/docker/docker/client"
+	"github.com/docker/docker/pkg/jsonmessage"
 	"github.com/moby/go-archive"
 )
 
@@ -101,20 +101,7 @@ func BuildImageWithDocker(configuration *config.Configuration, revision int32) e
 		return err
 	}
 	defer resp.Body.Close()
-	for {
-		// Read the response body to get build progress
-		var message BuildResponseStreamMessage
-		if err := json.NewDecoder(resp.Body).Decode(&message); err != nil {
-			if err == io.EOF {
-				break // End of stream
-			}
-			return err
-		}
-
-		log.Default().Println(message.Stream)
-	}
-
-	return nil
+	return jsonmessage.DisplayJSONMessagesStream(resp.Body, os.Stdout, os.Stdout.Fd(), false, nil)
 }
 
 func TagImage(configuration *config.Configuration, newTag string) error {
@@ -177,11 +164,13 @@ func ImportImageFromFile(filePath string) error {
 		return err
 	}
 	defer responseBody.Body.Close()
-	io.Copy(io.Discard, responseBody.Body)
+	return jsonmessage.DisplayJSONMessagesStream(responseBody.Body, os.Stdout, os.Stdout.Fd(), false, nil)
 
-	return nil
 }
 
 type BuildResponseStreamMessage struct {
-	Stream string `json:"stream,omitempty"`
+	Stream      string `json:"stream,omitempty"`
+	ErrorDetail struct {
+		Message string `json:"message,omitempty"`
+	} `json:"errorDetail,omitempty"`
 }
