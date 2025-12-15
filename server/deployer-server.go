@@ -188,7 +188,7 @@ func handleRequest(dataChannel ssh.Channel) {
 			return
 		}
 		if request.Prune {
-			cmd := exec.Command("docker", "image", "prune", "-f")
+			cmd := exec.Command("docker", "image", "prune", "-f", "-a")
 			output, err := cmd.CombinedOutput()
 			if err != nil {
 				log.Printf("Error pruning images: %v. Output: %s", err, string(output))

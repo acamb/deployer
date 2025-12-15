@@ -166,7 +166,7 @@ func main() {
 		},
 	}
 	newRevision = deployCmd.Flags().BoolP("new-revision", "n", false, "Create a new revision for this deployment")
-	prune := deployCmd.Flags().BoolP("prune", "p", false, "run docker image prune after deployment")
+	prune = deployCmd.Flags().BoolP("prune", "p", false, "run docker image prune after deployment")
 	rootCmd.AddCommand(deployCmd)
 
 	rootCmd.AddCommand(&cobra.Command{
