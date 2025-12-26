@@ -212,6 +212,9 @@ func handleRequest(dataChannel ssh.Channel) {
 		if request.Command == protocol.Logs {
 			cmd := exec.Command("docker", "compose", "logs", "-f")
 			cmd.Dir = config.WorkingDirectory + "/" + request.Name
+			if request.Revision != "" {
+				cmd.Dir = cmd.Dir + "/" + request.Revision
+			}
 			stdout, err := cmd.StdoutPipe()
 			if err != nil {
 				_ = handleResponse("Errore apertura pipe logs: "+err.Error(), protocol.Ko, encoder)

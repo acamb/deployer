@@ -101,10 +101,12 @@ func Logs(name string, revision int32) (<-chan string, error) {
 		for {
 			var response protocol.Response
 			if err := decoder.Decode(&response); err != nil {
-				log.Default().Println("Error decoding log response:", err)
+				if err != io.EOF {
+					log.Default().Println("Error decoding log response:", err)
+				}
 				return
 			}
-			if response.Status == protocol.Ok {
+			if response.Status == protocol.Ok || response.Status == protocol.Ko {
 				logChan <- response.Message
 			} else {
 				return
