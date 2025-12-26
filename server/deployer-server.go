@@ -157,7 +157,7 @@ func handleRequest(dataChannel ssh.Channel) {
 			return
 		}
 
-		if err := os.Mkdir(getWorkingDirectory(request), 0770); err != nil && !os.IsExist(err) {
+		if err := os.MkdirAll(getWorkingDirectory(request), 0770); err != nil && !os.IsExist(err) {
 			log.Printf("Terminating deployment due to directory creation error: %v", err)
 			_ = handleResponse(fmt.Sprintf("Error creating directory for container: %v", err), protocol.Ko, encoder)
 			return
@@ -346,10 +346,14 @@ func saveComposeFile(request protocol.Request, fileContent string) error {
 					if !strings.Contains(img, ":") {
 						svc["image"] = img + ":" + request.Revision
 					}
+				} else {
+					return errors.New("Compose file must specify an image for service " + request.Name)
 				}
 				if img, ok := svc["container_name"].(string); ok && img != "" {
 					svc["container_name"] = svc["container_name"].(string) + "_" + request.Revision
 				}
+			} else {
+				return errors.New("Compose file does not contain service " + request.Name + ". This is required to use revisions.")
 			}
 		}
 	}
