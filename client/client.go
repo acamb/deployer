@@ -3,6 +3,7 @@ package client
 import (
 	"bufio"
 	"bytes"
+	"compress/zlib"
 	"crypto/md5"
 	"deployer/client/config"
 	"deployer/client/version"
@@ -18,6 +19,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"time"
 
 	"golang.org/x/crypto/ssh"
 )
@@ -193,9 +195,21 @@ func handleRequest(name string,
 		progressTracker := &ProgressTracker{
 			BytesTotal: request.TarSize,
 		}
+		inPipe, outPipe := io.Pipe()
 		reader := io.TeeReader(tarFile, progressTracker)
 		progressTracker.StartReporting()
-		_, err = io.Copy(dataChannel, reader)
+		go func() {
+			defer outPipe.Close()
+			writer := zlib.NewWriter(outPipe)
+			defer writer.Close()
+			_, err := io.Copy(writer, reader)
+			if err != nil {
+				log.Printf("error compressing tar file: %v", err)
+				return
+			}
+		}()
+		time.Sleep(100 * time.Millisecond) // Give some time for progress tracker to start
+		_, err = io.Copy(dataChannel, inPipe)
 		progressTracker.StopReporting()
 		if err != nil {
 			return fmt.Errorf("error sending tar file: %v", err)

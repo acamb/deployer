@@ -3,6 +3,7 @@ package main
 import (
 	"bufio"
 	"bytes"
+	"compress/zlib"
 	"deployer/builder"
 	"deployer/protocol"
 	serverConfig "deployer/server/config"
@@ -373,20 +374,54 @@ func receiveStreamedTar(dataChannel ssh.Channel, name string, tarSize int64) (st
 	log.Printf("Starting to receive tar file of %d bytes", tarSize)
 	tarFilePath := filepath.Join(config.WorkingDirectory, name+".tar")
 	tarFile, err := os.Create(tarFilePath)
-	defer tarFile.Close()
+	defer func(tarFile *os.File) {
+		err := tarFile.Close()
+		if err != nil {
+			log.Printf("Error closing tar file: %v", err)
+		}
+	}(tarFile)
 	if err != nil {
 		return "", fmt.Errorf("error creating tar file: %v", err)
 	}
-
+	timeoutHandler := &TimeoutHandler{}
+	teeReader := io.TeeReader(dataChannel, timeoutHandler)
+	doneChannel := make(chan interface{})
 	log.Printf("Created tar file at %s, starting copy...", tarFilePath)
-	bytesWritten, err := io.CopyN(tarFile, dataChannel, tarSize)
-	log.Printf("Copied %d bytes out of %d expected", bytesWritten, tarSize)
-
+	reader, err := zlib.NewReader(teeReader)
 	if err != nil {
-		return "", fmt.Errorf("error writing tar file: %v", err)
+		doneChannel <- fmt.Errorf("error creating zlib reader: %v", err)
+	}
+	timeoutChannel := timeoutHandler.StartMonitoring(5 * time.Second)
+	defer func(reader io.ReadCloser) {
+		err := reader.Close()
+		if err != nil {
+			log.Printf("Error closing zlib reader: %v", err)
+		}
+	}(reader)
+	go func() {
+		written, err := io.Copy(tarFile, reader)
+		log.Printf("Copied %d bytes out of %d expected", written, tarSize)
+		doneChannel <- struct{}{}
+		if err != nil {
+			doneChannel <- fmt.Errorf("error writing tar file: %v", err)
+		}
+	}()
+
+	for {
+		select {
+		case <-timeoutChannel:
+			log.Printf("Timeout detected while receiving tar file")
+			return tarFile.Name(), nil
+		case result := <-doneChannel:
+			switch v := result.(type) {
+			case error:
+				return "", v
+			case struct{}:
+				return tarFile.Name(), nil
+			}
+		}
 	}
 
-	return tarFile.Name(), nil
 }
 
 func stopContainer(request protocol.Request) error {
