@@ -388,7 +388,7 @@ func saveComposeFile(request protocol.Request, fileContent string) error {
 					return errors.New("Compose file must specify an image for service " + request.Name)
 				}
 				if img, ok := svc["container_name"].(string); ok && img != "" {
-					svc["container_name"] = svc["container_name"].(string) + "_" + request.Revision
+					svc["container_name"] = svc["container_name"].(string) + "-" + request.Revision
 				}
 			} else {
 				return errors.New("Compose file does not contain service " + request.Name + ". This is required to use revisions.")
