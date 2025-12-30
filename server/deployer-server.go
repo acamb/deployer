@@ -357,7 +357,7 @@ func handleSSHConnection(conn net.Conn, sshConfig *ssh.ServerConfig) (ssh.Channe
 func saveComposeFile(request protocol.Request, fileContent string) error {
 	var filePath = getWorkingDirectory(request) + "/docker-compose.yml"
 	err := os.Remove(filePath)
-	if err != nil {
+	if err != nil && !errors.Is(err, os.ErrNotExist) {
 		return err
 	}
 	file, err := os.OpenFile(filePath, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0600)
@@ -476,9 +476,11 @@ func stopContainer(request protocol.Request) error {
 
 func startContainer(request protocol.Request) error {
 	composeFile := string(request.ComposeFile)
-	err := saveComposeFile(request, composeFile)
-	if err != nil {
-		return err
+	if strings.TrimSpace(composeFile) != "" {
+		err := saveComposeFile(request, composeFile)
+		if err != nil {
+			return err
+		}
 	}
 	cmd := exec.Command("docker", "compose", "up", "-d")
 	cmd.Dir = getWorkingDirectory(request)
