@@ -74,7 +74,12 @@ func main() {
 	if listener, err = net.Listen("tcp", net.JoinHostPort(config.ListenAddress, strconv.Itoa(config.Port))); err != nil {
 		log.Fatal(err)
 	}
-	defer listener.Close()
+	defer func(listener net.Listener) {
+		err := listener.Close()
+		if err != nil {
+			log.Printf("Error closing listener: %v", err)
+		}
+	}(listener)
 	for {
 		conn, err := listener.Accept()
 		if err != nil {
@@ -91,7 +96,12 @@ func handleConnection(conn net.Conn, sshConfig *ssh.ServerConfig) {
 			log.Printf("Panic gestito in handleConnection: %v", r)
 		}
 	}()
-	defer conn.Close()
+	defer func(conn net.Conn) {
+		err := conn.Close()
+		if err != nil {
+			log.Printf("Error closing connection: %v", err)
+		}
+	}(conn)
 
 	dataChannel, sshConn, err := handleSSHConnection(conn, sshConfig)
 	if err != nil {
@@ -99,8 +109,18 @@ func handleConnection(conn net.Conn, sshConfig *ssh.ServerConfig) {
 		return
 	}
 
-	defer dataChannel.Close()
-	defer sshConn.Close()
+	defer func(dataChannel ssh.Channel) {
+		err := dataChannel.Close()
+		if err != nil {
+			log.Printf("Error closing data channel: %v", err)
+		}
+	}(dataChannel)
+	defer func(sshConn *ssh.ServerConn) {
+		err := sshConn.Close()
+		if err != nil {
+			log.Printf("Error closing SSH connection: %v", err)
+		}
+	}(sshConn)
 
 	handleRequest(dataChannel)
 }
@@ -146,7 +166,12 @@ func handleRequest(dataChannel ssh.Channel) {
 		if request.TarSize > 0 {
 			fmt.Println("Receiving tar file of size", request.TarSize)
 			tarFilePath, err = receiveStreamedTar(dataChannel, request.Name, request.TarSize)
-			defer os.Remove(tarFilePath)
+			defer func(name string) {
+				err := os.Remove(name)
+				if err != nil {
+					log.Printf("Error removing temporary tar file %s: %v", name, err)
+				}
+			}(tarFilePath)
 			if err != nil {
 				log.Printf("Error saving files for deployment: %v", err)
 				_ = handleResponse(fmt.Sprintf("Error receiving tar file: %v", err), protocol.Ko, encoder)
@@ -251,7 +276,11 @@ func handleRequest(dataChannel ssh.Channel) {
 				log.Printf("Error preparing revisions response for container %s: %v", request.Name, err)
 				return
 			}
-			handleResponse(string(message), protocol.Ok, encoder)
+			err = handleResponse(string(message), protocol.Ok, encoder)
+			if err != nil {
+				log.Printf("Error sending revisions response for container %s: %v", request.Name, err)
+				return
+			}
 			return
 		}
 	} else {
@@ -305,7 +334,7 @@ func handleSSHConnection(conn net.Conn, sshConfig *ssh.ServerConfig) (ssh.Channe
 				returnChannel = channel
 				break
 			} else {
-				newChannel.Reject(ssh.UnknownChannelType, "channel type not supported")
+				_ = newChannel.Reject(ssh.UnknownChannelType, "channel type not supported")
 			}
 		}
 		readSshChannel <- returnChannel
@@ -327,12 +356,20 @@ func handleSSHConnection(conn net.Conn, sshConfig *ssh.ServerConfig) (ssh.Channe
 
 func saveComposeFile(request protocol.Request, fileContent string) error {
 	var filePath = getWorkingDirectory(request) + "/docker-compose.yml"
-	os.Remove(filePath)
+	err := os.Remove(filePath)
+	if err != nil {
+		return err
+	}
 	file, err := os.OpenFile(filePath, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0600)
 	if err != nil {
 		return errors.New("Error opening file for writing: " + err.Error())
 	}
-	defer file.Close()
+	defer func(file *os.File) {
+		err := file.Close()
+		if err != nil {
+			log.Printf("Error closing compose file: %v", err)
+		}
+	}(file)
 
 	var doc = make(map[string]interface{})
 
