@@ -920,7 +920,7 @@ services:
 				require.NoError(t, err)
 			},
 			expectError:  true,
-			errorMessage: "empty compose file",
+			errorMessage: "no configuration file provided: not found",
 		},
 		{
 			name: "missing-dir",
