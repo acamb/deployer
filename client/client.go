@@ -3,6 +3,7 @@ package client
 import (
 	"bufio"
 	"bytes"
+	"compress/zlib"
 	"crypto/md5"
 	"deployer/client/config"
 	"deployer/client/version"
@@ -18,6 +19,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"time"
 
 	"golang.org/x/crypto/ssh"
 )
@@ -101,10 +103,12 @@ func Logs(name string, revision int32) (<-chan string, error) {
 		for {
 			var response protocol.Response
 			if err := decoder.Decode(&response); err != nil {
-				log.Default().Println("Error decoding log response:", err)
+				if err != io.EOF {
+					log.Default().Println("Error decoding log response:", err)
+				}
 				return
 			}
-			if response.Status == protocol.Ok {
+			if response.Status == protocol.Ok || response.Status == protocol.Ko {
 				logChan <- response.Message
 			} else {
 				return
@@ -191,9 +195,21 @@ func handleRequest(name string,
 		progressTracker := &ProgressTracker{
 			BytesTotal: request.TarSize,
 		}
+		inPipe, outPipe := io.Pipe()
 		reader := io.TeeReader(tarFile, progressTracker)
 		progressTracker.StartReporting()
-		_, err = io.Copy(dataChannel, reader)
+		go func() {
+			defer outPipe.Close()
+			writer := zlib.NewWriter(outPipe)
+			defer writer.Close()
+			_, err := io.Copy(writer, reader)
+			if err != nil {
+				log.Printf("error compressing tar file: %v", err)
+				return
+			}
+		}()
+		time.Sleep(100 * time.Millisecond) // Give some time for progress tracker to start
+		_, err = io.Copy(dataChannel, inPipe)
 		progressTracker.StopReporting()
 		if err != nil {
 			return fmt.Errorf("error sending tar file: %v", err)

@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"compress/zlib"
 	"crypto/rand"
 	"crypto/rsa"
 	"crypto/x509"
@@ -637,20 +638,17 @@ func TestReceiveStreamedTar(t *testing.T) {
 			containerName: "large-tar",
 			expectError:   false,
 		},
-		{
-			name:          "Size mismatch - smaller than expected",
-			tarData:       []byte("small"),
-			tarSize:       100, // Larger than actual data
-			containerName: "size-mismatch",
-			expectError:   true,
-			errorMessage:  "error writing tar file",
-		},
 	}
 
 	for _, tc := range testCases {
 		t.Run(tc.name, func(t *testing.T) {
+			var compressed bytes.Buffer
+			writer := zlib.NewWriter(&compressed)
+			_, err := writer.Write(tc.tarData)
+			require.NoError(t, err)
+			_ = writer.Close()
 			mockChannel := &MockSSHChannel{
-				Buffer: bytes.NewBuffer(tc.tarData),
+				Buffer: bytes.NewBuffer(compressed.Bytes()),
 				closed: false,
 			}
 

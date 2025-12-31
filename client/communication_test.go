@@ -259,10 +259,11 @@ func TestLogsStreaming(t *testing.T) {
 	}
 
 	// Should receive 3 log lines (the Ko response ends the stream)
-	assert.Len(t, logs, 3)
+	assert.Len(t, logs, 4)
 	assert.Equal(t, "Log line 1", logs[0])
 	assert.Equal(t, "Log line 2", logs[1])
 	assert.Equal(t, "Log line 3", logs[2])
+	assert.Equal(t, "End of logs", logs[3])
 }
 
 func TestHandleRequestEncoding(t *testing.T) {
