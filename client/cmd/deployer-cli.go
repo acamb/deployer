@@ -226,6 +226,12 @@ func DeployImage(configuration *config.Configuration, revision int32, prune bool
 	}
 	log.Default().Println("Preparing docker image transfer...")
 	outputFile, err := builder.SaveImageToFile(configuration, revision)
+	defer func(name string) {
+		err := os.Remove(name)
+		if err != nil {
+			log.Default().Println("Warning: could not delete temporary file:", name)
+		}
+	}(outputFile)
 	if err != nil {
 		return err
 	}
@@ -234,7 +240,9 @@ func DeployImage(configuration *config.Configuration, revision int32, prune bool
 	if err != nil {
 		return err
 	}
-
+	defer func(composeFile *os.File) {
+		_ = composeFile.Close()
+	}(composeFile)
 	log.Default().Println("Deploying docker image to remote server...")
 	if err := client.DeployImage(
 		configuration.Name,
