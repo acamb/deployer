@@ -164,6 +164,8 @@ func handleRequest(dataChannel ssh.Channel) {
 		tarFilePath := ""
 		var err error
 		if request.TarSize > 0 {
+			//we send back an ok to signal that the request and version are valid and we can start receiving the tar file
+			_ = handleResponse("ok", protocol.Ok, encoder)
 			fmt.Println("Receiving tar file of size", request.TarSize)
 			tarFilePath, err = receiveStreamedTar(dataChannel, request.Name, request.TarSize)
 			defer func(name string) {

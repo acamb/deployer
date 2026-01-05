@@ -188,7 +188,14 @@ func handleRequest(name string,
 	if err = encoder.Encode(&request); err != nil {
 		return err
 	}
-	if tarFile != nil {
+	var response protocol.Response
+	if request.TarSize > 0 {
+		if err = decoder.Decode(&response); err != nil {
+			return err
+		}
+		if response.Status != protocol.Ok {
+			return errors.New(response.Message)
+		}
 		if _, err := tarFile.Seek(0, 0); err != nil {
 			return fmt.Errorf("error seeking tar file: %v", err)
 		}
@@ -199,9 +206,13 @@ func handleRequest(name string,
 		reader := io.TeeReader(tarFile, progressTracker)
 		progressTracker.StartReporting()
 		go func() {
-			defer outPipe.Close()
+			defer func(outPipe *io.PipeWriter) {
+				_ = outPipe.Close()
+			}(outPipe)
 			writer := zlib.NewWriter(outPipe)
-			defer writer.Close()
+			defer func(writer *zlib.Writer) {
+				_ = writer.Close()
+			}(writer)
 			_, err := io.Copy(writer, reader)
 			if err != nil {
 				log.Printf("error compressing tar file: %v", err)
@@ -215,7 +226,7 @@ func handleRequest(name string,
 			return fmt.Errorf("error sending tar file: %v", err)
 		}
 	}
-	var response protocol.Response
+
 	if err = decoder.Decode(&response); err != nil {
 		return err
 	}

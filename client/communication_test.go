@@ -213,15 +213,23 @@ func TestDeployImage(t *testing.T) {
 	require.NoError(t, err)
 	defer composeFileHandle.Close()
 
-	// Pre-encode a success response
+	// Pre-encode a success response to signal that he request is valid and can proceed to send the tar
 	response := protocol.Response{
+		Status:  protocol.Ok,
+		Message: "ok",
+	}
+	responseBuffer := &bytes.Buffer{}
+	respEncoder := gob.NewEncoder(responseBuffer)
+	err = respEncoder.Encode(&response)
+	require.NoError(t, err)
+
+	// Pre-encode final success response after tar is sent
+	response = protocol.Response{
 		Status:  protocol.Ok,
 		Message: "Deployment successful",
 	}
-	responseBuffer := &bytes.Buffer{}
-	err = gob.NewEncoder(responseBuffer).Encode(&response)
+	err = respEncoder.Encode(&response)
 	require.NoError(t, err)
-
 	mockChannel.Write(responseBuffer.Bytes())
 
 	err = DeployImage("test-app", tarFile, composeFileHandle, -1, false)
@@ -284,14 +292,24 @@ func TestHandleRequestEncoding(t *testing.T) {
 	require.NoError(t, err)
 	defer composeFileHandle.Close()
 
-	// Pre-encode success response
+	// Pre-encode success response to signal that the request is valid and can proceed to send the tar
 	response := protocol.Response{
+		Status:  protocol.Ok,
+		Message: "ok",
+	}
+	responseBuffer := &bytes.Buffer{}
+	responseEncoder := gob.NewEncoder(responseBuffer)
+	err = responseEncoder.Encode(&response)
+	require.NoError(t, err)
+
+	// Pre-encode final success response after tar is sent
+	response = protocol.Response{
 		Status:  protocol.Ok,
 		Message: "Success",
 	}
-	responseBuffer := &bytes.Buffer{}
-	err = gob.NewEncoder(responseBuffer).Encode(&response)
+	err = responseEncoder.Encode(&response)
 	require.NoError(t, err)
+
 	mockChannel.Write(responseBuffer.Bytes())
 
 	// Call handleRequest directly
