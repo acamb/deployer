@@ -44,8 +44,12 @@ deb:
     chown -R deployer-server:deployer-server /opt/deployer\n\
     chmod 600 /opt/deployer/host_rsa_key\n\
     systemctl daemon-reload\n\
-    systemctl enable deployer-server.service\n\
-    systemctl start deployer-server.service\n\
+	if systemctl is-active --quiet deployer-server.service; then\n\
+	    systemctl restart deployer-server.service\n\
+	else\n\
+	    systemctl enable deployer-server.service\n\
+	    systemctl start deployer-server.service\n\
+	fi\n\
     " > $(PKGDIR)/DEBIAN/postinst
 	chmod 755 $(PKGDIR)/DEBIAN/postinst
 	dpkg-deb --build $(PKGDIR) $(DEBNAME)
@@ -80,8 +84,12 @@ rpm:
 	echo "chown -R deployer-server:deployer-server /opt/deployer" >> $(PKGDIR)-rpm/SPECS/deployer-server.spec
 	echo "chmod 600 /opt/deployer/host_rsa_key" >> $(PKGDIR)-rpm/SPECS/deployer-server.spec
 	echo "systemctl daemon-reload" >> $(PKGDIR)-rpm/SPECS/deployer-server.spec
-	echo "systemctl enable deployer-server.service" >> $(PKGDIR)-rpm/SPECS/deployer-server.spec
-	echo "systemctl start deployer-server.service" >> $(PKGDIR)-rpm/SPECS/deployer-server.spec
+	echo "if systemctl is-active --quiet deployer-server.service; then" >> $(PKGDIR)-rpm/SPECS/deployer-server.spec
+	echo "    systemctl restart deployer-server.service" >> $(PKGDIR)-rpm/SPECS/deployer-server.spec
+	echo "else" >> $(PKGDIR)-rpm/SPECS/deployer-server.spec
+	echo "    systemctl enable deployer-server.service" >> $(PKGDIR)-rpm/SPECS/deployer-server.spec
+	echo "    systemctl start deployer-server.service" >> $(PKGDIR)-rpm/SPECS/deployer-server.spec
+	echo "fi" >> $(PKGDIR)-rpm/SPECS/deployer-server.spec
 	echo "" >> $(PKGDIR)-rpm/SPECS/deployer-server.spec
 	echo "%files" >> $(PKGDIR)-rpm/SPECS/deployer-server.spec
 	echo "/usr/bin/deployer-server" >> $(PKGDIR)-rpm/SPECS/deployer-server.spec
