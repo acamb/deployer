@@ -83,6 +83,17 @@ func DeployImage(name string, tarFilePath string, composeFile *os.File, revision
 		prune)
 }
 
+func PushImage(name string, tarFilePath string, composeFile *os.File, revision int32, prune bool) error {
+	return handleRequest(
+		name,
+		protocol.Push,
+		tarFilePath,
+		composeFile,
+		revision,
+		false,
+		prune)
+}
+
 func Logs(name string, revision int32) (<-chan string, error) {
 	request := protocol.Request{
 		Name:    name,
@@ -156,6 +167,11 @@ func handleRequest(name string,
 	prune bool) error {
 	var err error
 	tarFile, err := os.Open(tarFilePath)
+	defer func() {
+		if tarFile != nil {
+			_ = tarFile.Close()
+		}
+	}()
 	request := protocol.Request{
 		Version: version.Version,
 		Name:    name,
@@ -169,20 +185,33 @@ func handleRequest(name string,
 		request.DeleteFiles = true
 	}
 
-	if tarFile != nil {
-		fileInfo, err := tarFile.Stat()
-		if err != nil {
-			return err
-		}
-		request.TarSize = fileInfo.Size()
-	}
-
 	if composeFile != nil {
 		composeData, err := os.ReadFile(composeFile.Name())
 		if err != nil {
 			return err
 		}
 		request.ComposeFile = composeData
+	}
+	var response protocol.Response
+	err = sendTar(request, tarFile)
+
+	if err = decoder.Decode(&response); err != nil {
+		return err
+	}
+	if response.Status != protocol.Ok {
+		return errors.New(response.Message)
+	}
+	return nil
+}
+
+func sendTar(request protocol.Request, tarFile *os.File) error {
+	var err error
+	if tarFile != nil {
+		fileInfo, err := tarFile.Stat()
+		if err != nil {
+			return err
+		}
+		request.TarSize = fileInfo.Size()
 	}
 
 	if err = encoder.Encode(&request); err != nil {
@@ -225,13 +254,6 @@ func handleRequest(name string,
 		if err != nil {
 			return fmt.Errorf("error sending tar file: %v", err)
 		}
-	}
-
-	if err = decoder.Decode(&response); err != nil {
-		return err
-	}
-	if response.Status != protocol.Ok {
-		return errors.New(response.Message)
 	}
 	return nil
 }
