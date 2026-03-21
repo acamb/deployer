@@ -353,12 +353,13 @@ The server will use the compose.yml file to deploy and manage the container.
 ### Client Operations
 
 ```bash
-deployer-client deploy [--prune] # Deploy application (and run docker image prune if specified)
-deployer-client start            # Start container
-deployer-client stop             # Stop container
-deployer-client restart          # Restart container
-deployer-client logs             # View container logs
-deployer-client revisions        # List running revisions of the application
+deployer-client deploy [--prune] [--revision] [--new-revision] # Deploy application (and run docker image prune if specified)
+deployer-client push [--prune] [--revision]
+deployer-client start [--revision]                             # Start container
+deployer-client stop [--revision]                              # Stop container
+deployer-client restart [--revision]                           # Restart container
+deployer-client logs [--revision]                              # View container logs
+deployer-client revisions                                      # List running revisions of the application
 ```
 
 
