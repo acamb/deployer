@@ -9,6 +9,7 @@ const (
 	Restart
 	Logs
 	Revisions
+	Push
 )
 
 func (c Command) String() string {
@@ -25,6 +26,8 @@ func (c Command) String() string {
 		return "Logs"
 	case Revisions:
 		return "Revisions"
+	case Push:
+		return "Push"
 	default:
 		return "Unknown Command"
 	}

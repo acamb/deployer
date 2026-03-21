@@ -83,6 +83,17 @@ func DeployImage(name string, tarFilePath string, composeFile *os.File, revision
 		prune)
 }
 
+func PushImage(name string, tarFilePath string, composeFile *os.File, revision int32, prune bool) error {
+	return handleRequest(
+		name,
+		protocol.Push,
+		tarFilePath,
+		composeFile,
+		revision,
+		false,
+		prune)
+}
+
 func Logs(name string, revision int32) (<-chan string, error) {
 	request := protocol.Request{
 		Name:    name,
@@ -156,6 +167,11 @@ func handleRequest(name string,
 	prune bool) error {
 	var err error
 	tarFile, err := os.Open(tarFilePath)
+	defer func() {
+		if tarFile != nil {
+			_ = tarFile.Close()
+		}
+	}()
 	request := protocol.Request{
 		Version: version.Version,
 		Name:    name,
@@ -169,6 +185,27 @@ func handleRequest(name string,
 		request.DeleteFiles = true
 	}
 
+	if composeFile != nil {
+		composeData, err := os.ReadFile(composeFile.Name())
+		if err != nil {
+			return err
+		}
+		request.ComposeFile = composeData
+	}
+	var response protocol.Response
+	err = sendTar(request, tarFile)
+
+	if err = decoder.Decode(&response); err != nil {
+		return err
+	}
+	if response.Status != protocol.Ok {
+		return errors.New(response.Message)
+	}
+	return nil
+}
+
+func sendTar(request protocol.Request, tarFile *os.File) error {
+	var err error
 	if tarFile != nil {
 		fileInfo, err := tarFile.Stat()
 		if err != nil {
@@ -177,18 +214,17 @@ func handleRequest(name string,
 		request.TarSize = fileInfo.Size()
 	}
 
-	if composeFile != nil {
-		composeData, err := os.ReadFile(composeFile.Name())
-		if err != nil {
-			return err
-		}
-		request.ComposeFile = composeData
-	}
-
 	if err = encoder.Encode(&request); err != nil {
 		return err
 	}
-	if tarFile != nil {
+	var response protocol.Response
+	if request.TarSize > 0 {
+		if err = decoder.Decode(&response); err != nil {
+			return err
+		}
+		if response.Status != protocol.Ok {
+			return errors.New(response.Message)
+		}
 		if _, err := tarFile.Seek(0, 0); err != nil {
 			return fmt.Errorf("error seeking tar file: %v", err)
 		}
@@ -199,9 +235,13 @@ func handleRequest(name string,
 		reader := io.TeeReader(tarFile, progressTracker)
 		progressTracker.StartReporting()
 		go func() {
-			defer outPipe.Close()
+			defer func(outPipe *io.PipeWriter) {
+				_ = outPipe.Close()
+			}(outPipe)
 			writer := zlib.NewWriter(outPipe)
-			defer writer.Close()
+			defer func(writer *zlib.Writer) {
+				_ = writer.Close()
+			}(writer)
 			_, err := io.Copy(writer, reader)
 			if err != nil {
 				log.Printf("error compressing tar file: %v", err)
@@ -214,13 +254,6 @@ func handleRequest(name string,
 		if err != nil {
 			return fmt.Errorf("error sending tar file: %v", err)
 		}
-	}
-	var response protocol.Response
-	if err = decoder.Decode(&response); err != nil {
-		return err
-	}
-	if response.Status != protocol.Ok {
-		return errors.New(response.Message)
 	}
 	return nil
 }

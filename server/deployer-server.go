@@ -161,40 +161,10 @@ func handleRequest(dataChannel ssh.Channel) {
 		}
 	} else if request.Command == protocol.Deploy {
 		composeFile := string(request.ComposeFile)
-		tarFilePath := ""
 		var err error
-		if request.TarSize > 0 {
-			fmt.Println("Receiving tar file of size", request.TarSize)
-			tarFilePath, err = receiveStreamedTar(dataChannel, request.Name, request.TarSize)
-			defer func(name string) {
-				err := os.Remove(name)
-				if err != nil {
-					log.Printf("Error removing temporary tar file %s: %v", name, err)
-				}
-			}(tarFilePath)
-			if err != nil {
-				log.Printf("Error saving files for deployment: %v", err)
-				_ = handleResponse(fmt.Sprintf("Error receiving tar file: %v", err), protocol.Ko, encoder)
-				return
-			}
-		} else {
-			log.Printf("Error saving files for deployment: %v", err)
-			_ = handleResponse(fmt.Sprintf("No tar file supplied"), protocol.Ko, encoder)
+		err = saveTarAndImport(request, dataChannel, encoder)
+		if err != nil {
 			return
-		}
-
-		if err := os.MkdirAll(getWorkingDirectory(request), 0770); err != nil && !os.IsExist(err) {
-			log.Printf("Terminating deployment due to directory creation error: %v", err)
-			_ = handleResponse(fmt.Sprintf("Error creating directory for container: %v", err), protocol.Ko, encoder)
-			return
-		}
-
-		if tarFilePath != "" {
-			if err = builder.ImportImageFromFile(tarFilePath); err != nil {
-				log.Printf("Error importing image: %v", err)
-				_ = handleResponse(fmt.Sprintf("Error importing tar file: %v", err), protocol.Ko, encoder)
-				return
-			}
 		}
 
 		if err = saveComposeFile(request, composeFile); err != nil {
@@ -283,11 +253,65 @@ func handleRequest(dataChannel ssh.Channel) {
 			}
 			return
 		}
+	} else if request.Command == protocol.Push {
+		composeFile := string(request.ComposeFile)
+		err := saveTarAndImport(request, dataChannel, encoder)
+		if err != nil {
+			return
+		}
+		if err = saveComposeFile(request, composeFile); err != nil {
+			_ = handleResponse(fmt.Sprintf("Error saving compose file: %v", err), protocol.Ko, encoder)
+			log.Printf("Error saving compose file for container %s: %v", request.Name, err)
+			return
+		}
+		_ = handleResponse(fmt.Sprintf("Image imported successfully"), protocol.Ok, encoder)
 	} else {
 		_ = handleResponse(fmt.Sprintf("Unknown command: %v", request.Command), protocol.Ko, encoder)
 		log.Printf("Unknown request received: %v", request.String())
 		return
 	}
+}
+
+func saveTarAndImport(request protocol.Request, dataChannel ssh.Channel, encoder *gob.Encoder) error {
+	tarFilePath := ""
+	var err error
+	if request.TarSize > 0 {
+		//we send back an ok to signal that the request and version are valid and we can start receiving the tar file
+		_ = handleResponse("ok", protocol.Ok, encoder)
+		fmt.Println("Receiving tar file of size", request.TarSize)
+		tarFilePath, err = receiveStreamedTar(dataChannel, request.Name, request.TarSize)
+		defer func(name string) {
+			err := os.Remove(name)
+			if err != nil {
+				log.Printf("Error removing temporary tar file %s: %v", name, err)
+			}
+		}(tarFilePath)
+		if err != nil {
+			log.Printf("Error saving files for deployment: %v", err)
+			_ = handleResponse(fmt.Sprintf("Error receiving tar file: %v", err), protocol.Ko, encoder)
+			return errors.New("Error receiving tar file: " + err.Error())
+		}
+	} else {
+		log.Printf("Error saving files for deployment: %v", err)
+		_ = handleResponse(fmt.Sprintf("No tar file supplied"), protocol.Ko, encoder)
+		return errors.New("No tar file supplied")
+	}
+
+	if err := os.MkdirAll(getWorkingDirectory(request), 0770); err != nil && !os.IsExist(err) {
+		log.Printf("Terminating deployment due to directory creation error: %v", err)
+		_ = handleResponse(fmt.Sprintf("Error creating directory for container: %v", err), protocol.Ko, encoder)
+		return errors.New("Error creating directory for container: " + err.Error())
+	}
+
+	if tarFilePath != "" {
+		if err = builder.ImportImageFromFile(tarFilePath); err != nil {
+			log.Printf("Error importing image: %v", err)
+			_ = handleResponse(fmt.Sprintf("Error importing tar file: %v", err), protocol.Ko, encoder)
+			return errors.New("Error importing tar file: " + err.Error())
+		}
+	}
+
+	return nil
 }
 
 func getRunningRevisions(name string) ([]string, error) {

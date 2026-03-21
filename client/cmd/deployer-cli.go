@@ -165,9 +165,47 @@ func main() {
 			}
 		},
 	}
+
+	pushCmd := &cobra.Command{
+		Use:   "push",
+		Short: "Push image and compose file to remote server without (re)starting the container",
+		Run: func(cmd *cobra.Command, args []string) {
+			Connect(configuration)
+			var rev int32
+			rev = -1
+			if configuration.EnableRevisions {
+				rev = *revision
+			}
+			if *newRevision {
+				if !configuration.EnableRevisions {
+					log.Fatalf("Cannot create new revision when revisions are disabled in configuration, please set enable_revisions: true in config file")
+				}
+				CheckComposeFileForServiceNameCoherence(configuration)
+				rev, err = readCurrentRevision()
+				rev++
+				if err != nil {
+					log.Fatalf("Error reading current revision: %v", err)
+				}
+			}
+			if err := PushImage(configuration, rev, *prune); err != nil {
+				log.Fatalf("Error deploying container: %v", err)
+			} else {
+				log.Println("Container deployed successfully")
+			}
+			if *newRevision {
+				err = writeRevisionToFile(rev)
+				if err != nil {
+					log.Fatalf("Error writing revision '%d' to file: %v", rev, err)
+				}
+			}
+		},
+	}
 	newRevision = deployCmd.Flags().BoolP("new-revision", "n", false, "Create a new revision for this deployment")
 	prune = deployCmd.Flags().BoolP("prune", "p", false, "run docker image prune after deployment")
 	rootCmd.AddCommand(deployCmd)
+
+	prune = pushCmd.Flags().BoolP("prune", "p", false, "run docker image prune after deployment")
+	rootCmd.AddCommand(pushCmd)
 
 	rootCmd.AddCommand(&cobra.Command{
 		Use:   "logs",
@@ -220,21 +258,23 @@ func Connect(configuration *config.Configuration) {
 }
 
 func DeployImage(configuration *config.Configuration, revision int32, prune bool) error {
-
-	if err := builder.BuildImage(configuration, revision); err != nil {
-		return err
-	}
-	log.Default().Println("Preparing docker image transfer...")
-	outputFile, err := builder.SaveImageToFile(configuration, revision)
-	if err != nil {
-		return err
-	}
-
 	composeFile, err := os.Open(configuration.ComposePath)
 	if err != nil {
 		return err
 	}
-
+	defer func(composeFile *os.File) {
+		_ = composeFile.Close()
+	}(composeFile)
+	outputFile, err := buildAndExportImage(configuration, revision)
+	defer func(name string) {
+		err := os.Remove(name)
+		if err != nil {
+			log.Default().Println("Warning: could not delete temporary file:", name)
+		}
+	}(outputFile)
+	if err != nil {
+		return err
+	}
 	log.Default().Println("Deploying docker image to remote server...")
 	if err := client.DeployImage(
 		configuration.Name,
@@ -245,6 +285,49 @@ func DeployImage(configuration *config.Configuration, revision int32, prune bool
 		return err
 	}
 	return nil
+}
+
+func PushImage(configuration *config.Configuration, revision int32, prune bool) error {
+	composeFile, err := os.Open(configuration.ComposePath)
+	if err != nil {
+		return err
+	}
+	defer func(composeFile *os.File) {
+		_ = composeFile.Close()
+	}(composeFile)
+	outputFile, err := buildAndExportImage(configuration, revision)
+	defer func(name string) {
+		err := os.Remove(name)
+		if err != nil {
+			log.Default().Println("Warning: could not delete temporary file:", name)
+		}
+	}(outputFile)
+	if err != nil {
+		return err
+	}
+	log.Default().Println("Deploying docker image to remote server...")
+	if err := client.PushImage(
+		configuration.Name,
+		outputFile,
+		composeFile,
+		revision,
+		prune); err != nil {
+		return err
+	}
+	return nil
+}
+
+func buildAndExportImage(configuration *config.Configuration, revision int32) (string, error) {
+	if err := builder.BuildImage(configuration, revision); err != nil {
+		return "", err
+	}
+	log.Default().Println("Preparing docker image transfer...")
+	outputFile, err := builder.SaveImageToFile(configuration, revision)
+	if err != nil {
+		return "", err
+	}
+
+	return outputFile, nil
 }
 
 func readCurrentRevision() (int32, error) {
