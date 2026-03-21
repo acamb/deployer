@@ -254,8 +254,14 @@ func handleRequest(dataChannel ssh.Channel) {
 			return
 		}
 	} else if request.Command == protocol.Push {
+		composeFile := string(request.ComposeFile)
 		err := saveTarAndImport(request, dataChannel, encoder)
 		if err != nil {
+			return
+		}
+		if err = saveComposeFile(request, composeFile); err != nil {
+			_ = handleResponse(fmt.Sprintf("Error saving compose file: %v", err), protocol.Ko, encoder)
+			log.Printf("Error saving compose file for container %s: %v", request.Name, err)
 			return
 		}
 		_ = handleResponse(fmt.Sprintf("Image imported successfully"), protocol.Ok, encoder)
