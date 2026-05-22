@@ -87,6 +87,7 @@ type Port struct {
 	LocalPort string `json:"localPort"`
 	BindPort  string `json:"bindPort"`
 	Protocol  string `json:"protocol"`
+	Address   string `json:"address"`
 }
 
 func (r Response) String() string {
