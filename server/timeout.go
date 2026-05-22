@@ -23,7 +23,7 @@ func (th *TimeoutHandler) StartMonitoring(timeout time.Duration) chan int {
 		for {
 			select {
 			case <-ticker.C:
-				if time.Now().UnixMilli()-th.lastActivity.Load() > int64(timeout) {
+				if time.Now().UnixMilli()-th.lastActivity.Load() > timeout.Milliseconds() {
 					stopCh <- 1
 					return
 				}

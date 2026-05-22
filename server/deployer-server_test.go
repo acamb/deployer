@@ -19,11 +19,35 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"golang.org/x/crypto/ssh"
 )
+
+// DuplexMockSSHChannel with separate reader and writeBuf,
+// enabling bidirectional communication for handleRequest.
+// The reader can be *bytes.Buffer or an io.PipeReader for streaming.
+type DuplexMockSSHChannel struct {
+	reader   io.Reader
+	writeBuf *bytes.Buffer
+}
+
+func (d *DuplexMockSSHChannel) Read(data []byte) (int, error) {
+	return d.reader.Read(data)
+}
+
+func (d *DuplexMockSSHChannel) Write(data []byte) (int, error) {
+	return d.writeBuf.Write(data)
+}
+
+func (d *DuplexMockSSHChannel) Close() error      { return nil }
+func (d *DuplexMockSSHChannel) CloseWrite() error { return nil }
+func (d *DuplexMockSSHChannel) SendRequest(_ string, _ bool, _ []byte) (bool, error) {
+	return false, nil
+}
+func (d *DuplexMockSSHChannel) Stderr() io.ReadWriter { return &bytes.Buffer{} }
 
 // Mock SSH Channel implementation
 type MockSSHChannel struct {
@@ -406,6 +430,20 @@ func TestCheckAuthorizedKey(t *testing.T) {
 			expectError:  true,
 			errorMessage: "access denied",
 		},
+		{
+			name: "File with invalid key line followed by valid key",
+			setupFunc: func(t *testing.T) (ssh.PublicKey, string) {
+				clientPublicKey, testPublicKey := generateTestSSHPublicKey(t)
+				authorizedKeysPath := filepath.Join(config.WorkingDirectory, "authorized_keys")
+				content := []string{
+					"this-is-not-a-valid-ssh-key",
+					testPublicKey,
+				}
+				createTestAuthorizedKeys(t, authorizedKeysPath, content)
+				return clientPublicKey, authorizedKeysPath
+			},
+			expectError: false, // valid key found after skipping the invalid one
+		},
 	}
 
 	for _, tc := range testCases {
@@ -570,6 +608,93 @@ func TestSaveComposeFile(t *testing.T) {
 			expectError:   true,
 			errorMessage:  "Error opening file",
 		},
+		{
+			name: "Revision modifies image and container_name",
+			request: protocol.Request{
+				Name:     "rev-app",
+				Revision: "42",
+			},
+			containerName: "rev-app",
+			content: `services:
+  rev-app:
+    image: myimage
+    container_name: mycontainer
+`,
+			setupFunc: func(t *testing.T, containerName string, revision string) {
+				err := os.MkdirAll(config.WorkingDirectory+"/"+containerName+"/"+revision, 0770)
+				require.NoError(t, err)
+			},
+			expectError:      false,
+			skipContentCheck: true,
+		},
+		{
+			name: "Revision with image that already has tag",
+			request: protocol.Request{
+				Name:     "tagged-app",
+				Revision: "99",
+			},
+			containerName: "tagged-app",
+			content: `services:
+  tagged-app:
+    image: myimage:latest
+`,
+			setupFunc: func(t *testing.T, containerName string, revision string) {
+				err := os.MkdirAll(config.WorkingDirectory+"/"+containerName+"/"+revision, 0770)
+				require.NoError(t, err)
+			},
+			expectError:      false,
+			skipContentCheck: true,
+		},
+		{
+			name: "Revision but service not found in compose",
+			request: protocol.Request{
+				Name:     "other-app",
+				Revision: "5",
+			},
+			containerName: "other-app",
+			content: `services:
+  different-service:
+    image: myimage
+`,
+			setupFunc: func(t *testing.T, containerName string, revision string) {
+				err := os.MkdirAll(config.WorkingDirectory+"/"+containerName+"/"+revision, 0770)
+				require.NoError(t, err)
+			},
+			expectError:  true,
+			errorMessage: "Compose file does not contain service other-app",
+		},
+		{
+			name: "Invalid YAML content",
+			request: protocol.Request{
+				Name: "yaml-error-app",
+			},
+			containerName: "yaml-error-app",
+			content:       "services:\n  bad: [unclosed bracket\n",
+			setupFunc: func(t *testing.T, containerName string, revision string) {
+				err := os.MkdirAll(config.WorkingDirectory+"/"+containerName, 0770)
+				require.NoError(t, err)
+			},
+			expectError:  true,
+			errorMessage: "Error parsing compose file content",
+		},
+		{
+			name: "Revision with missing image field in service",
+			request: protocol.Request{
+				Name:     "no-image-app",
+				Revision: "3",
+			},
+			containerName: "no-image-app",
+			content: `services:
+  no-image-app:
+    build: .
+`,
+			setupFunc: func(t *testing.T, containerName string, revision string) {
+				err := os.MkdirAll(config.WorkingDirectory+"/"+containerName+"/"+revision, 0770)
+				require.NoError(t, err)
+			},
+			expectError:  true,
+			errorMessage: "Compose file must specify an image for service no-image-app",
+		},
 	}
 
 	for _, tc := range testCases {
@@ -638,17 +763,32 @@ func TestReceiveStreamedTar(t *testing.T) {
 			containerName: "large-tar",
 			expectError:   false,
 		},
+		{
+			name:          "Corrupted zlib data",
+			tarData:       nil, // not used - we write raw bytes directly
+			tarSize:       16,
+			containerName: "corrupt-tar",
+			expectError:   true,
+			errorMessage:  "error writing tar file",
+		},
 	}
 
 	for _, tc := range testCases {
 		t.Run(tc.name, func(t *testing.T) {
-			var compressed bytes.Buffer
-			writer := zlib.NewWriter(&compressed)
-			_, err := writer.Write(tc.tarData)
-			require.NoError(t, err)
-			_ = writer.Close()
+			var channelBuf *bytes.Buffer
+			if tc.tarData == nil {
+				// Valid zlib header (0x78 0x9C) followed by garbage to trigger decompression error
+				channelBuf = bytes.NewBuffer([]byte{0x78, 0x9C, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF})
+			} else {
+				var compressed bytes.Buffer
+				writer := zlib.NewWriter(&compressed)
+				_, err := writer.Write(tc.tarData)
+				require.NoError(t, err)
+				_ = writer.Close()
+				channelBuf = bytes.NewBuffer(compressed.Bytes())
+			}
 			mockChannel := &MockSSHChannel{
-				Buffer: bytes.NewBuffer(compressed.Bytes()),
+				Buffer: channelBuf,
 				closed: false,
 			}
 
@@ -999,6 +1139,641 @@ func TestHandleResponse(t *testing.T) {
 			assert.Equal(t, tc.status, response.Status)
 		})
 	}
+}
+
+func TestTimeoutHandler(t *testing.T) {
+	t.Run("Write updates lastActivity", func(t *testing.T) {
+		th := &TimeoutHandler{}
+		before := th.lastActivity.Load()
+
+		n, err := th.Write([]byte("hello"))
+		assert.NoError(t, err)
+		assert.Equal(t, 5, n)
+		assert.Greater(t, th.lastActivity.Load(), before)
+	})
+
+	t.Run("Write with empty slice", func(t *testing.T) {
+		th := &TimeoutHandler{}
+		n, err := th.Write([]byte{})
+		assert.NoError(t, err)
+		assert.Equal(t, 0, n)
+	})
+
+	t.Run("StartMonitoring fires after inactivity timeout", func(t *testing.T) {
+		th := &TimeoutHandler{}
+		// Start monitoring with a very short timeout (200ms)
+		ch := th.StartMonitoring(200 * time.Millisecond)
+
+		// Write once to set lastActivity, then stop writing
+		_, _ = th.Write([]byte("ping"))
+
+		// Wait for timeout signal (should arrive within ~300ms after last write)
+		select {
+		case _, ok := <-ch:
+			// channel closed or value received means timeout fired
+			_ = ok
+		case <-time.After(2 * time.Second):
+			t.Fatal("timeout monitor did not fire within expected time")
+		}
+	})
+
+	t.Run("StartMonitoring resets on continuous activity", func(t *testing.T) {
+		th := &TimeoutHandler{}
+		ch := th.StartMonitoring(300 * time.Millisecond)
+
+		// Keep writing for 400ms to stay active, then stop
+		done := make(chan struct{})
+		go func() {
+			defer close(done)
+			deadline := time.Now().Add(400 * time.Millisecond)
+			for time.Now().Before(deadline) {
+				_, _ = th.Write([]byte("activity"))
+				time.Sleep(50 * time.Millisecond)
+			}
+		}()
+		<-done
+
+		// After activity stops, timeout should fire eventually
+		select {
+		case <-ch:
+			// good
+		case <-time.After(2 * time.Second):
+			t.Fatal("timeout monitor did not fire after activity stopped")
+		}
+	})
+}
+
+func TestGetWorkingDirectory(t *testing.T) {
+	setupTestEnvironment(t)
+
+	testCases := []struct {
+		name     string
+		request  protocol.Request
+		expected string
+	}{
+		{
+			name: "Without revision",
+			request: protocol.Request{
+				Name: "myapp",
+			},
+			expected: config.WorkingDirectory + "/myapp",
+		},
+		{
+			name: "With revision",
+			request: protocol.Request{
+				Name:     "myapp",
+				Revision: "42",
+			},
+			expected: config.WorkingDirectory + "/myapp/42",
+		},
+		{
+			name: "Empty revision treated as no revision",
+			request: protocol.Request{
+				Name:     "myapp",
+				Revision: "",
+			},
+			expected: config.WorkingDirectory + "/myapp",
+		},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			result := getWorkingDirectory(tc.request)
+			assert.Equal(t, tc.expected, result)
+		})
+	}
+}
+
+func TestParsePortsOutput(t *testing.T) {
+	testCases := []struct {
+		name         string
+		output       string
+		expectError  bool
+		errorMessage string
+		expectPorts  []protocol.Port
+	}{
+		{
+			name:        "Single port",
+			output:      "80/tcp -> 0.0.0.0:8080\n",
+			expectError: false,
+			expectPorts: []protocol.Port{
+				{LocalPort: "80", BindPort: "8080", Protocol: "tcp", Address: "0.0.0.0"},
+			},
+		},
+		{
+			name:        "Multiple ports",
+			output:      "80/tcp -> 0.0.0.0:8080\n443/tcp -> 0.0.0.0:8443\n",
+			expectError: false,
+			expectPorts: []protocol.Port{
+				{LocalPort: "80", BindPort: "8080", Protocol: "tcp", Address: "0.0.0.0"},
+				{LocalPort: "443", BindPort: "8443", Protocol: "tcp", Address: "0.0.0.0"},
+			},
+		},
+		{
+			name:        "Multiple ports, ipv6",
+			output:      "80/tcp -> 0.0.0.0:8080\n443/tcp -> [::]:8080\n",
+			expectError: false,
+			expectPorts: []protocol.Port{
+				{LocalPort: "80", BindPort: "8080", Protocol: "tcp", Address: "0.0.0.0"},
+				{LocalPort: "443", BindPort: "8080", Protocol: "tcp", Address: "::"},
+			},
+		},
+		{
+			name:        "Empty output",
+			output:      "",
+			expectError: false,
+			expectPorts: nil,
+		},
+		{
+			name:        "Output with blank lines",
+			output:      "\n80/tcp -> 0.0.0.0:8080\n\n",
+			expectError: false,
+			expectPorts: []protocol.Port{
+				{LocalPort: "80", BindPort: "8080", Protocol: "tcp", Address: "0.0.0.0"},
+			},
+		},
+		{
+			name:         "Malformed line - missing protocol",
+			output:       "80 -> 0.0.0.0:8080\n",
+			expectError:  true,
+			errorMessage: "Error parsing ports binding for",
+		},
+		{
+			name:         "Malformed line - missing host port",
+			output:       "80/tcp -> 0.0.0.0\n",
+			expectError:  true,
+			errorMessage: "Error parsing ports binding for",
+		},
+		{
+			name:        "UDP port",
+			output:      "53/udp -> 0.0.0.0:5353\n",
+			expectError: false,
+			expectPorts: []protocol.Port{
+				{LocalPort: "53", BindPort: "5353", Protocol: "udp", Address: "0.0.0.0"},
+			},
+		},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			ports, err := parsePortsOutput(tc.output)
+			if tc.expectError {
+				assert.Error(t, err)
+				if tc.errorMessage != "" {
+					assert.Contains(t, err.Error(), tc.errorMessage)
+				}
+			} else {
+				assert.NoError(t, err)
+				assert.Equal(t, tc.expectPorts, ports)
+			}
+		})
+	}
+}
+
+func TestParseRevisionsList(t *testing.T) {
+	testCases := []struct {
+		name            string
+		output          string
+		expectRevisions []string
+	}{
+		{
+			name:            "Single container",
+			output:          "abc123 myapp-1\n",
+			expectRevisions: []string{"myapp-1"},
+		},
+		{
+			name:            "Multiple containers",
+			output:          "abc123 myapp-1\ndef456 myapp-2\n",
+			expectRevisions: []string{"myapp-1", "myapp-2"},
+		},
+		{
+			name:            "Empty output",
+			output:          "",
+			expectRevisions: nil,
+		},
+		{
+			name:            "Output with blank lines",
+			output:          "\nabc123 myapp-1\n\n",
+			expectRevisions: []string{"myapp-1"},
+		},
+		{
+			name:            "Line without space - skipped",
+			output:          "abc123\ndef456 myapp-2\n",
+			expectRevisions: []string{"myapp-2"},
+		},
+		{
+			name:            "Container name with spaces",
+			output:          "abc123 myapp revision 1\n",
+			expectRevisions: []string{"myapp revision 1"},
+		},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			revisions := parseRevisionsList(tc.output)
+			assert.Equal(t, tc.expectRevisions, revisions)
+		})
+	}
+}
+
+func TestHandleRequest_Commands(t *testing.T) {
+	setupTestEnvironment(t)
+
+	// serverVersion is "dev" - same as client/version.Version in this test build
+	const serverVersion = "dev"
+
+	// helper: encode a request into a fresh channel and call handleRequest,
+	// then decode and return the first response.
+	runRequest := func(t *testing.T, req protocol.Request) protocol.Response {
+		t.Helper()
+		ch := &MockSSHChannel{Buffer: &bytes.Buffer{}, closed: false}
+		enc := gob.NewEncoder(ch)
+		dec := gob.NewDecoder(ch)
+		require.NoError(t, enc.Encode(req))
+		handleRequest(ch)
+		var resp protocol.Response
+		require.NoError(t, dec.Decode(&resp))
+		return resp
+	}
+
+	t.Run("Stop_missing_directory_returns_Ko", func(t *testing.T) {
+		resp := runRequest(t, protocol.Request{
+			Version: serverVersion,
+			Command: protocol.Stop,
+			Name:    "nonexistent-stop-app",
+		})
+		assert.Equal(t, protocol.Ko, resp.Status)
+		assert.Contains(t, resp.Message, "Error stopping container")
+	})
+
+	t.Run("Stop_TestingMode_returns_Ok", func(t *testing.T) {
+		containerName := "stop-ok-app"
+		require.NoError(t, os.MkdirAll(config.WorkingDirectory+"/"+containerName, 0770))
+		TestingMode = true
+		resp := runRequest(t, protocol.Request{
+			Version: serverVersion,
+			Command: protocol.Stop,
+			Name:    containerName,
+		})
+		TestingMode = false
+		assert.Equal(t, protocol.Ok, resp.Status)
+		assert.Contains(t, resp.Message, "stopped successfully")
+	})
+
+	t.Run("Start_missing_directory_returns_Ko", func(t *testing.T) {
+		resp := runRequest(t, protocol.Request{
+			Version:     serverVersion,
+			Command:     protocol.Start,
+			Name:        "nonexistent-start-app",
+			ComposeFile: []byte(""),
+		})
+		assert.Equal(t, protocol.Ko, resp.Status)
+		assert.Contains(t, resp.Message, "Error starting container")
+	})
+
+	t.Run("Deploy_no_tar_returns_Ko", func(t *testing.T) {
+		resp := runRequest(t, protocol.Request{
+			Version:     serverVersion,
+			Command:     protocol.Deploy,
+			Name:        "deploy-app",
+			TarSize:     0,
+			ComposeFile: []byte("services:\n  web:\n    image: nginx"),
+		})
+		assert.Equal(t, protocol.Ko, resp.Status)
+		assert.Contains(t, resp.Message, "No tar file supplied")
+	})
+
+	t.Run("Push_no_tar_returns_Ko", func(t *testing.T) {
+		resp := runRequest(t, protocol.Request{
+			Version:     serverVersion,
+			Command:     protocol.Push,
+			Name:        "push-app",
+			TarSize:     0,
+			ComposeFile: []byte("services:\n  web:\n    image: nginx"),
+		})
+		assert.Equal(t, protocol.Ko, resp.Status)
+		assert.Contains(t, resp.Message, "No tar file supplied")
+	})
+
+	t.Run("Restart_missing_directory_returns_Ko", func(t *testing.T) {
+		resp := runRequest(t, protocol.Request{
+			Version: serverVersion,
+			Command: protocol.Restart,
+			Name:    "nonexistent-restart-app",
+		})
+		assert.Equal(t, protocol.Ko, resp.Status)
+		assert.Contains(t, resp.Message, "Error stopping container")
+	})
+
+	t.Run("Revisions_docker_unavailable_returns_Ko", func(t *testing.T) {
+		resp := runRequest(t, protocol.Request{
+			Version: serverVersion,
+			Command: protocol.Revisions,
+			Name:    "nonexistent-rev-app",
+		})
+		assert.Equal(t, protocol.Ko, resp.Status)
+		assert.Contains(t, resp.Message, "Error retrieving revisions")
+	})
+
+	t.Run("Ports_docker_unavailable_returns_Ko", func(t *testing.T) {
+		resp := runRequest(t, protocol.Request{
+			Version: serverVersion,
+			Command: protocol.Ports,
+			Name:    "nonexistent-ports-app",
+		})
+		assert.Equal(t, protocol.Ko, resp.Status)
+		assert.Contains(t, resp.Message, "Error retrieving ports")
+	})
+
+	t.Run("Logs_missing_directory_returns_Ko", func(t *testing.T) {
+		resp := runRequest(t, protocol.Request{
+			Version: serverVersion,
+			Command: protocol.Logs,
+			Name:    "nonexistent-logs-app",
+		})
+		assert.Equal(t, protocol.Ko, resp.Status)
+		// cmd.Start() fails because working directory doesn't exist
+		assert.Contains(t, resp.Message, "Error running logs command")
+	})
+
+	t.Run("Unknown_command_returns_Ko", func(t *testing.T) {
+		resp := runRequest(t, protocol.Request{
+			Version: serverVersion,
+			Command: protocol.Command(99),
+			Name:    "unknown-app",
+		})
+		assert.Equal(t, protocol.Ko, resp.Status)
+		assert.Contains(t, resp.Message, "Unknown command")
+	})
+
+	t.Run("Decode_error_returns_silently", func(t *testing.T) {
+		// Send invalid gob bytes — handleRequest should log and return without sending a response
+		ch := &MockSSHChannel{Buffer: bytes.NewBuffer([]byte("this is not gob")), closed: false}
+		handleRequest(ch)
+		// Buffer should be empty (no response written) or contain nothing decodable as Response
+		var resp protocol.Response
+		err := gob.NewDecoder(ch).Decode(&resp)
+		assert.Error(t, err, "expected no valid response after decode error")
+	})
+
+	t.Run("Deploy_TarSize_positive_zlib_error_returns_Ko", func(t *testing.T) {
+		// Use DuplexMockSSHChannel: server reads request from readBuf, writes responses to writeBuf.
+		// readBuf is empty after request → zlib.NewReader on empty stream returns ErrHeader.
+		readBuf := &bytes.Buffer{}
+		writeBuf := &bytes.Buffer{}
+		require.NoError(t, gob.NewEncoder(readBuf).Encode(protocol.Request{
+			Version:     serverVersion,
+			Command:     protocol.Deploy,
+			Name:        "deploy-tar-app",
+			TarSize:     1024,
+			ComposeFile: []byte("services:\n  web:\n    image: nginx"),
+		}))
+		ch := &DuplexMockSSHChannel{reader: readBuf, writeBuf: writeBuf}
+		handleRequest(ch)
+
+		dec := gob.NewDecoder(writeBuf)
+		var okResp protocol.Response
+		require.NoError(t, dec.Decode(&okResp), "expected ok response")
+		assert.Equal(t, protocol.Ok, okResp.Status)
+		assert.Equal(t, "ok", okResp.Message)
+
+		var errResp protocol.Response
+		require.NoError(t, dec.Decode(&errResp), "expected error response")
+		assert.Equal(t, protocol.Ko, errResp.Status)
+		assert.Contains(t, errResp.Message, "Error receiving tar file")
+	})
+
+	t.Run("Push_TarSize_positive_zlib_error_returns_Ko", func(t *testing.T) {
+		readBuf := &bytes.Buffer{}
+		writeBuf := &bytes.Buffer{}
+		require.NoError(t, gob.NewEncoder(readBuf).Encode(protocol.Request{
+			Version:     serverVersion,
+			Command:     protocol.Push,
+			Name:        "push-tar-app",
+			TarSize:     512,
+			ComposeFile: []byte("services:\n  web:\n    image: nginx"),
+		}))
+		ch := &DuplexMockSSHChannel{reader: readBuf, writeBuf: writeBuf}
+		handleRequest(ch)
+
+		dec := gob.NewDecoder(writeBuf)
+		var okResp protocol.Response
+		require.NoError(t, dec.Decode(&okResp))
+		assert.Equal(t, protocol.Ok, okResp.Status)
+
+		var errResp protocol.Response
+		require.NoError(t, dec.Decode(&errResp))
+		assert.Equal(t, protocol.Ko, errResp.Status)
+		assert.Contains(t, errResp.Message, "Error receiving tar file")
+	})
+
+	t.Run("Revisions_empty_result_returns_Ok_with_json", func(t *testing.T) {
+		containerName := "revisions-ok-app"
+		require.NoError(t, os.MkdirAll(config.WorkingDirectory+"/"+containerName, 0770))
+		resp := runRequest(t, protocol.Request{
+			Version: serverVersion,
+			Command: protocol.Revisions,
+			Name:    containerName,
+		})
+		// docker ps works (empty result for non-running containers) → Ok JSON response
+		assert.Equal(t, protocol.Ok, resp.Status)
+		assert.Contains(t, resp.Message, "revisions")
+	})
+
+	t.Run("Logs_existing_directory_returns_Fine_log", func(t *testing.T) {
+		containerName := "logs-ok-app"
+		require.NoError(t, os.MkdirAll(config.WorkingDirectory+"/"+containerName, 0770))
+		// cmd.Start() succeeds; docker compose exits immediately (no compose file) → "End of logs stream"
+		resp := runRequest(t, protocol.Request{
+			Version: serverVersion,
+			Command: protocol.Logs,
+			Name:    containerName,
+		})
+		assert.Equal(t, protocol.Ok, resp.Status)
+		assert.Contains(t, resp.Message, "End of logs stream")
+	})
+
+	t.Run("Deploy_valid_tar_ImportImageFails_returns_Ko", func(t *testing.T) {
+		// Use io.Pipe so gob cannot read ahead past the request boundary.
+		// The goroutine feeds: request bytes, then a valid empty zlib stream.
+		// receiveStreamedTar succeeds (empty tar file), then ImportImageFromFile fails.
+		pr, pw := io.Pipe()
+		writeBuf := &bytes.Buffer{}
+		ch := &DuplexMockSSHChannel{reader: pr, writeBuf: writeBuf}
+
+		go func() {
+			defer pw.Close()
+			_ = gob.NewEncoder(pw).Encode(protocol.Request{
+				Version:     serverVersion,
+				Command:     protocol.Deploy,
+				Name:        "deploy-pipe-app",
+				TarSize:     1,
+				ComposeFile: []byte("services:\n  web:\n    image: nginx"),
+			})
+			// Write a valid empty zlib stream so receiveStreamedTar succeeds
+			var zlibData bytes.Buffer
+			zlibWriter := zlib.NewWriter(&zlibData)
+			_ = zlibWriter.Close()
+			_, _ = pw.Write(zlibData.Bytes())
+		}()
+
+		handleRequest(ch)
+
+		dec := gob.NewDecoder(writeBuf)
+		var okResp protocol.Response
+		require.NoError(t, dec.Decode(&okResp), "expected ok handshake response")
+		assert.Equal(t, protocol.Ok, okResp.Status)
+		assert.Equal(t, "ok", okResp.Message)
+
+		var errResp protocol.Response
+		require.NoError(t, dec.Decode(&errResp), "expected error response after import failure")
+		assert.Equal(t, protocol.Ko, errResp.Status)
+	})
+
+	t.Run("Push_TestingMode_success_returns_Ok", func(t *testing.T) {
+		pr, pw := io.Pipe()
+		writeBuf := &bytes.Buffer{}
+		ch := &DuplexMockSSHChannel{reader: pr, writeBuf: writeBuf}
+
+		go func() {
+			defer pw.Close()
+			_ = gob.NewEncoder(pw).Encode(protocol.Request{
+				Version: serverVersion,
+				Command: protocol.Push,
+				Name:    "push-testmode-app",
+				TarSize: 1,
+				ComposeFile: []byte(`services:
+  push-testmode-app:
+    image: myimage
+`),
+			})
+			var zlibData bytes.Buffer
+			zlibWriter := zlib.NewWriter(&zlibData)
+			_ = zlibWriter.Close()
+			_, _ = pw.Write(zlibData.Bytes())
+		}()
+
+		TestingMode = true
+		handleRequest(ch)
+		TestingMode = false
+
+		dec := gob.NewDecoder(writeBuf)
+		var okHandshake protocol.Response
+		require.NoError(t, dec.Decode(&okHandshake))
+		assert.Equal(t, protocol.Ok, okHandshake.Status)
+
+		var successResp protocol.Response
+		require.NoError(t, dec.Decode(&successResp))
+		assert.Equal(t, protocol.Ok, successResp.Status)
+		assert.Contains(t, successResp.Message, "imported successfully")
+	})
+
+	t.Run("Start_TestingMode_success_returns_Ok", func(t *testing.T) {
+		containerName := "start-testmode-app"
+		require.NoError(t, os.MkdirAll(config.WorkingDirectory+"/"+containerName, 0770))
+		TestingMode = true
+		resp := runRequest(t, protocol.Request{
+			Version: serverVersion,
+			Command: protocol.Start,
+			Name:    containerName,
+			ComposeFile: []byte(`services:
+  start-testmode-app:
+    image: myimage
+`),
+		})
+		TestingMode = false
+		assert.Equal(t, protocol.Ok, resp.Status)
+		assert.Contains(t, resp.Message, "started successfully")
+	})
+
+	t.Run("Restart_TestingMode_success_returns_Ok", func(t *testing.T) {
+		containerName := "restart-testmode-app"
+		require.NoError(t, os.MkdirAll(config.WorkingDirectory+"/"+containerName, 0770))
+		TestingMode = true
+		resp := runRequest(t, protocol.Request{
+			Version: serverVersion,
+			Command: protocol.Restart,
+			Name:    containerName,
+		})
+		TestingMode = false
+		assert.Equal(t, protocol.Ok, resp.Status)
+		assert.Contains(t, resp.Message, "started successfully")
+	})
+
+	t.Run("Deploy_TestingMode_full_success_returns_Ok", func(t *testing.T) {
+		pr, pw := io.Pipe()
+		writeBuf := &bytes.Buffer{}
+		ch := &DuplexMockSSHChannel{reader: pr, writeBuf: writeBuf}
+
+		go func() {
+			defer pw.Close()
+			_ = gob.NewEncoder(pw).Encode(protocol.Request{
+				Version: serverVersion,
+				Command: protocol.Deploy,
+				Name:    "deploy-full-app",
+				TarSize: 1,
+				Prune:   true,
+				ComposeFile: []byte(`services:
+  deploy-full-app:
+    image: myimage
+`),
+			})
+			var zlibData bytes.Buffer
+			zlibWriter := zlib.NewWriter(&zlibData)
+			_ = zlibWriter.Close()
+			_, _ = pw.Write(zlibData.Bytes())
+		}()
+
+		TestingMode = true
+		handleRequest(ch)
+		TestingMode = false
+
+		dec := gob.NewDecoder(writeBuf)
+		var okHandshake protocol.Response
+		require.NoError(t, dec.Decode(&okHandshake))
+		assert.Equal(t, protocol.Ok, okHandshake.Status)
+
+		var successResp protocol.Response
+		require.NoError(t, dec.Decode(&successResp))
+		assert.Equal(t, protocol.Ok, successResp.Status)
+		assert.Contains(t, successResp.Message, "started successfully")
+	})
+
+	t.Run("Deploy_TestingMode_invalid_compose_saveComposeFile_fails", func(t *testing.T) {
+		// saveTarAndImport succeeds (TestingMode), but saveComposeFile fails (invalid YAML).
+		pr, pw := io.Pipe()
+		writeBuf := &bytes.Buffer{}
+		ch := &DuplexMockSSHChannel{reader: pr, writeBuf: writeBuf}
+
+		go func() {
+			defer pw.Close()
+			_ = gob.NewEncoder(pw).Encode(protocol.Request{
+				Version:     serverVersion,
+				Command:     protocol.Deploy,
+				Name:        "deploy-compose-fail-app",
+				TarSize:     1,
+				ComposeFile: []byte("services:\n  bad: [unclosed bracket\n"),
+			})
+			var zlibData bytes.Buffer
+			zlibWriter := zlib.NewWriter(&zlibData)
+			_ = zlibWriter.Close()
+			_, _ = pw.Write(zlibData.Bytes())
+		}()
+
+		TestingMode = true
+		handleRequest(ch)
+		TestingMode = false
+
+		dec := gob.NewDecoder(writeBuf)
+		var okHandshake protocol.Response
+		require.NoError(t, dec.Decode(&okHandshake))
+		assert.Equal(t, protocol.Ok, okHandshake.Status)
+
+		var errResp protocol.Response
+		require.NoError(t, dec.Decode(&errResp))
+		assert.Equal(t, protocol.Ko, errResp.Status)
+		assert.Contains(t, errResp.Message, "Error saving compose file")
+	})
 }
 
 func TestHandleSSHConnection(t *testing.T) {
