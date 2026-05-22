@@ -5,6 +5,8 @@ import (
 	"deployer/client"
 	"deployer/client/config"
 	"deployer/client/version"
+	"deployer/protocol"
+	"encoding/json"
 	"fmt"
 	"log"
 	"os"
@@ -17,7 +19,9 @@ func main() {
 	var configuration *config.Configuration
 	var err error
 	var revision *int32
+	var port *int32 //used in Ports command
 	var newRevision *bool
+	var json *bool
 	var prune *bool
 	var deleteFiles *bool
 	rootCmd := &cobra.Command{
@@ -231,6 +235,22 @@ func main() {
 		},
 	})
 
+	portsCommand := &cobra.Command{
+		Use:   "ports",
+		Short: "List ports (and mappings) for a container",
+		Run: func(cmd *cobra.Command, args []string) {
+			Connect(configuration)
+			ports, err := client.Ports(configuration.Name, revision, port)
+			if err != nil {
+				log.Fatal(err)
+			}
+			displayPorts(ports, json)
+		},
+	}
+	port = portsCommand.Flags().Int32P("port", "p", -1, "Specify the port to display info on")
+	json = portsCommand.Flags().BoolP("json", "j", false, "Format output as json")
+	rootCmd.AddCommand(portsCommand)
+
 	rootCmd.AddCommand(&cobra.Command{
 		Use:   "revisions",
 		Short: "List the revisions running on the remote container",
@@ -348,4 +368,15 @@ func readCurrentRevision() (int32, error) {
 
 func writeRevisionToFile(revision int32) error {
 	return os.WriteFile("REVISION", []byte(fmt.Sprint(revision)), 0644)
+}
+
+func displayPorts(ports []protocol.Port, jsonFormat *bool) {
+	if *jsonFormat {
+		j, _ := json.Marshal(ports)
+		fmt.Println(string(j))
+	} else {
+		for _, port := range ports {
+			fmt.Printf("Address: %s, Container port: %s, Host port: %s, Protocol: %s\n", port.Address, port.LocalPort, port.BindPort, port.Protocol)
+		}
+	}
 }

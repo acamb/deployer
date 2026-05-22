@@ -1,4 +1,6 @@
 services:
   test:
-    image: test
+    image: nginx:alpine
     container_name: test
+    ports:
+      - "8080:80"

@@ -154,6 +154,36 @@ func Revisions(name string) ([]string, error) {
 	return revisions.Revisions, nil
 }
 
+func Ports(name string, revision *int32, port *int32) ([]protocol.Port, error) {
+	request := protocol.Request{
+		Name:    name,
+		Command: protocol.Ports,
+		Version: version.Version,
+	}
+	if port != nil && *port > 0 {
+		request.Port = fmt.Sprint(*port)
+	}
+	if revision != nil {
+		request.Revision = fmt.Sprint(*revision)
+	}
+	if err := encoder.Encode(&request); err != nil {
+		return nil, err
+	}
+	response := protocol.Response{}
+	if err := decoder.Decode(&response); err != nil {
+		return nil, err
+	}
+	if response.Status != protocol.Ok {
+		return nil, errors.New(response.Message)
+	}
+	ports := protocol.PortsResponse{}
+	err := json.Unmarshal([]byte(response.Message), &ports)
+	if err != nil {
+		return nil, err
+	}
+	return ports.Port, nil
+}
+
 func handleSimpleRequest(name string, req protocol.Command, revision int32, deleteFiles bool) error {
 	return handleRequest(name, req, "", nil, revision, deleteFiles, false)
 }
