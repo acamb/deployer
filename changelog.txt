@@ -21,5 +21,7 @@
     The new naming schema is "name-revision", please re-deploy applications after this update to keep a consistent naming.
 0.6.0 2026/03/21:
     Added 'push' command to send image/compose file without creating or restarting a container.
-0.7.0 XXXX/XX/XX:
+0.6.1 2026/05/22:
     Added 'Ports' command to list all ports currently in use by containers and their mapping to the host.
+    Fixed deploy commands with images not built locally (previously remote images were not pulled)
+    Added more test & coverage on server code
