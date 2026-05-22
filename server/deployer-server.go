@@ -265,6 +265,18 @@ func handleRequest(dataChannel ssh.Channel) {
 			return
 		}
 		_ = handleResponse(fmt.Sprintf("Image imported successfully"), protocol.Ok, encoder)
+	} else if request.Command == protocol.Ports {
+		ports, err := getPortsBinding(request.Name, request.Port)
+		if err != nil {
+			_ = handleResponse(fmt.Sprintf("Error retrieving ports: %v", err), protocol.Ko, encoder)
+		}
+		message, err := json.Marshal(protocol.PortsResponse{
+			Port: ports,
+		})
+		if err != nil {
+			_ = handleResponse(fmt.Sprintf("Error preparing ports response: %v", err), protocol.Ko, encoder)
+		}
+		err = handleResponse(string(message), protocol.Ok, encoder)
 	} else {
 		_ = handleResponse(fmt.Sprintf("Unknown command: %v", request.Command), protocol.Ko, encoder)
 		log.Printf("Unknown request received: %v", request.String())
@@ -333,6 +345,43 @@ func getRunningRevisions(name string) ([]string, error) {
 		}
 	}
 	return revisions, nil
+}
+
+func getPortsBinding(name string, port string) ([]protocol.Port, error) {
+	dockerPortCommand := []string{"port", name}
+	if port != "" {
+		dockerPortCommand = append(dockerPortCommand, port)
+	}
+	cmd := exec.Command("docker", dockerPortCommand...)
+	cmd.Dir = config.WorkingDirectory + "/" + name
+	output, err := cmd.CombinedOutput()
+	if err != nil {
+		return nil, errors.New("Error retrieving ports binding: " + err.Error() + ". Output: " + string(output))
+	}
+	var ports []protocol.Port
+	lines := strings.Split(string(output), "\n")
+	for _, line := range lines {
+		line = strings.TrimSpace(line)
+		if line != "" {
+			parts := strings.Split(line, "->")
+			if len(parts) == 2 {
+				containerPort := strings.TrimSpace(parts[0])
+				containerPortParts := strings.Split(containerPort, "/")
+				hostPart := strings.TrimSpace(parts[1])
+				hostParts := strings.Split(hostPart, ":")
+				if len(hostParts) == 2 && len(containerPortParts) == 2 {
+					ports = append(ports, protocol.Port{
+						LocalPort: containerPortParts[0],
+						BindPort:  hostParts[1],
+						Protocol:  containerPortParts[1],
+					})
+				} else {
+					return nil, errors.New("Error parsing ports binding for: " + line)
+				}
+			}
+		}
+	}
+	return ports, nil
 }
 
 func handleSSHConnection(conn net.Conn, sshConfig *ssh.ServerConfig) (ssh.Channel, *ssh.ServerConn, error) {

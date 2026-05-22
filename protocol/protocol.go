@@ -10,6 +10,7 @@ const (
 	Logs
 	Revisions
 	Push
+	Ports
 )
 
 func (c Command) String() string {
@@ -28,6 +29,8 @@ func (c Command) String() string {
 		return "Revisions"
 	case Push:
 		return "Push"
+	case Ports:
+		return "Ports"
 	default:
 		return "Unknown Command"
 	}
@@ -60,6 +63,7 @@ type Request struct {
 	Revision    string
 	DeleteFiles bool
 	Prune       bool
+	Port        string // only used in Ports command
 }
 
 func (r Request) String() string {
@@ -73,6 +77,16 @@ type Response struct {
 
 type RevisionsDetails struct {
 	Revisions []string `json:"revisions"`
+}
+
+type PortsResponse struct {
+	Port []Port `json:"ports"`
+}
+
+type Port struct {
+	LocalPort string `json:"localPort"`
+	BindPort  string `json:"bindPort"`
+	Protocol  string `json:"protocol"`
 }
 
 func (r Response) String() string {

@@ -6,6 +6,20 @@
     Avoid keeping tar image in memory while loading from remote
 0.3.1 2025/11/02:
     Fix issue with tar transfer
-xxx:
-    Client / Server version checking
-    Tar file transfer progress indication
+0.4.0 2025/11/29:
+    Added "revisions" to allow multiple deployments (testing, zero-downtime deployments, etc)
+0.4.1 2025/12/15:
+    Version coherency check
+    Better error reporting in build / load image
+    --prune flag in deploy command to run docker prune -a -f on the server after the deploy
+0.5.0 2025/12/31:
+   - faster deploys for large images (the image tar is now compressed on the fly while deploying)
+   - fixed some minor bugs in logs / start / deploy with revisions
+
+    Breaking changes:
+    Previously the containers name when using revisions was named "name_revision", which is not a valid domain name and some applications like tomcat will refuse to serve requests to that hostnames.
+    The new naming schema is "name-revision", please re-deploy applications after this update to keep a consistent naming.
+0.6.0 2026/03/21:
+    Added 'push' command to send image/compose file without creating or restarting a container.
+0.7.0 XXXX/XX/XX:
+    Added 'Ports' command to list all ports currently in use by containers and their mapping to the host.
