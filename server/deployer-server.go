@@ -217,7 +217,7 @@ func handleRequest(dataChannel ssh.Channel) {
 				return
 			}
 			if err := cmd.Start(); err != nil {
-				_ = handleResponse("Errore avvio logs: "+err.Error(), protocol.Ko, encoder)
+				_ = handleResponse("Error running logs command: "+err.Error(), protocol.Ko, encoder)
 				return
 			}
 			scanner := bufio.NewScanner(stdout)
@@ -228,7 +228,7 @@ func handleRequest(dataChannel ssh.Channel) {
 				}
 			}
 			_ = cmd.Wait()
-			_ = handleResponse("Fine log", protocol.Ok, encoder)
+			_ = handleResponse("End of logs stream", protocol.Ok, encoder)
 			return
 		}
 	} else if request.Command == protocol.Revisions {
@@ -316,25 +316,21 @@ func saveTarAndImport(request protocol.Request, dataChannel ssh.Channel, encoder
 	}
 
 	if tarFilePath != "" {
-		if err = builder.ImportImageFromFile(tarFilePath); err != nil {
-			log.Printf("Error importing image: %v", err)
-			_ = handleResponse(fmt.Sprintf("Error importing tar file: %v", err), protocol.Ko, encoder)
-			return errors.New("Error importing tar file: " + err.Error())
+		if !TestingMode {
+			if err = builder.ImportImageFromFile(tarFilePath); err != nil {
+				log.Printf("Error importing image: %v", err)
+				_ = handleResponse(fmt.Sprintf("Error importing tar file: %v", err), protocol.Ko, encoder)
+				return errors.New("Error importing tar file: " + err.Error())
+			}
 		}
 	}
 
 	return nil
 }
 
-func getRunningRevisions(name string) ([]string, error) {
-	cmd := exec.Command("docker", "ps", "--filter", "name=^"+name, "--format", "{{.ID}} {{.Names}}")
-	cmd.Dir = config.WorkingDirectory + "/" + name
-	output, err := cmd.CombinedOutput()
-	if err != nil {
-		return nil, errors.New("Error retrieving running containers: " + err.Error() + ". Output: " + string(output))
-	}
+func parseRevisionsList(output string) []string {
 	var revisions []string
-	lines := strings.Split(string(output), "\n")
+	lines := strings.Split(output, "\n")
 	for _, line := range lines {
 		line = strings.TrimSpace(line)
 		if line != "" {
@@ -344,7 +340,53 @@ func getRunningRevisions(name string) ([]string, error) {
 			}
 		}
 	}
-	return revisions, nil
+	return revisions
+}
+
+func getRunningRevisions(name string) ([]string, error) {
+	cmd := exec.Command("docker", "ps", "--filter", "name=^"+name, "--format", "{{.ID}} {{.Names}}")
+	cmd.Dir = config.WorkingDirectory + "/" + name
+	output, err := cmd.CombinedOutput()
+	if err != nil {
+		return nil, errors.New("Error retrieving running containers: " + err.Error() + ". Output: " + string(output))
+	}
+	return parseRevisionsList(string(output)), nil
+}
+
+func parsePortsOutput(output string) ([]protocol.Port, error) {
+	var ports []protocol.Port
+	lines := strings.Split(output, "\n")
+	for _, line := range lines {
+		line = strings.TrimSpace(line)
+		if line != "" {
+			parts := strings.Split(line, "->")
+			if len(parts) == 2 {
+				containerPort := strings.TrimSpace(parts[0])
+				containerPortParts := strings.Split(containerPort, "/")
+				hostPart := strings.TrimSpace(parts[1])
+				var hostParts []string
+				if strings.Contains(hostPart, "]") {
+					hostParts = strings.Split(hostPart, "]:")
+					if len(hostParts) == 2 {
+						hostParts[0] = strings.TrimPrefix(hostParts[0], "[")
+					}
+				} else {
+					hostParts = strings.Split(hostPart, ":")
+				}
+				if len(hostParts) == 2 && len(containerPortParts) == 2 {
+					ports = append(ports, protocol.Port{
+						LocalPort: containerPortParts[0],
+						BindPort:  hostParts[1],
+						Protocol:  containerPortParts[1],
+						Address:   hostParts[0],
+					})
+				} else {
+					return nil, errors.New("Error parsing ports binding for: " + line)
+				}
+			}
+		}
+	}
+	return ports, nil
 }
 
 func getPortsBinding(name string, port string) ([]protocol.Port, error) {
@@ -358,30 +400,7 @@ func getPortsBinding(name string, port string) ([]protocol.Port, error) {
 	if err != nil {
 		return nil, errors.New("Error retrieving ports binding: " + err.Error() + ". Output: " + string(output))
 	}
-	var ports []protocol.Port
-	lines := strings.Split(string(output), "\n")
-	for _, line := range lines {
-		line = strings.TrimSpace(line)
-		if line != "" {
-			parts := strings.Split(line, "->")
-			if len(parts) == 2 {
-				containerPort := strings.TrimSpace(parts[0])
-				containerPortParts := strings.Split(containerPort, "/")
-				hostPart := strings.TrimSpace(parts[1])
-				hostParts := strings.Split(hostPart, ":")
-				if len(hostParts) == 2 && len(containerPortParts) == 2 {
-					ports = append(ports, protocol.Port{
-						LocalPort: containerPortParts[0],
-						BindPort:  hostParts[1],
-						Protocol:  containerPortParts[1],
-					})
-				} else {
-					return nil, errors.New("Error parsing ports binding for: " + line)
-				}
-			}
-		}
-	}
-	return ports, nil
+	return parsePortsOutput(string(output))
 }
 
 func handleSSHConnection(conn net.Conn, sshConfig *ssh.ServerConfig) (ssh.Channel, *ssh.ServerConn, error) {
@@ -484,36 +503,41 @@ func receiveStreamedTar(dataChannel ssh.Channel, name string, tarSize int64) (st
 	log.Printf("Starting to receive tar file of %d bytes", tarSize)
 	tarFilePath := filepath.Join(config.WorkingDirectory, name+".tar")
 	tarFile, err := os.Create(tarFilePath)
+	if err != nil {
+		return "", fmt.Errorf("error creating tar file: %v", err)
+	}
 	defer func(tarFile *os.File) {
 		err := tarFile.Close()
 		if err != nil {
 			log.Printf("Error closing tar file: %v", err)
 		}
 	}(tarFile)
-	if err != nil {
-		return "", fmt.Errorf("error creating tar file: %v", err)
-	}
+
 	timeoutHandler := &TimeoutHandler{}
 	teeReader := io.TeeReader(dataChannel, timeoutHandler)
-	doneChannel := make(chan interface{})
-	log.Printf("Created tar file at %s, starting copy...", tarFilePath)
+
 	reader, err := zlib.NewReader(teeReader)
 	if err != nil {
-		doneChannel <- fmt.Errorf("error creating zlib reader: %v", err)
+		return "", fmt.Errorf("error creating zlib reader: %v", err)
 	}
-	timeoutChannel := timeoutHandler.StartMonitoring(5 * time.Second)
 	defer func(reader io.ReadCloser) {
 		err := reader.Close()
 		if err != nil {
 			log.Printf("Error closing zlib reader: %v", err)
 		}
 	}(reader)
+
+	timeoutChannel := timeoutHandler.StartMonitoring(5 * time.Second)
+	doneChannel := make(chan interface{})
+	log.Printf("Created tar file at %s, starting copy...", tarFilePath)
+
 	go func() {
 		written, err := io.Copy(tarFile, reader)
 		log.Printf("Copied %d bytes out of %d expected", written, tarSize)
-		doneChannel <- struct{}{}
 		if err != nil {
 			doneChannel <- fmt.Errorf("error writing tar file: %v", err)
+		} else {
+			doneChannel <- struct{}{}
 		}
 	}()
 
@@ -554,6 +578,9 @@ func startContainer(request protocol.Request) error {
 		if err != nil {
 			return err
 		}
+	}
+	if TestingMode {
+		return nil
 	}
 	cmd := exec.Command("docker", "compose", "up", "-d")
 	cmd.Dir = getWorkingDirectory(request)
