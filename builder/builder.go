@@ -11,6 +11,7 @@ import (
 	"os/exec"
 
 	"github.com/docker/docker/api/types/build"
+	"github.com/docker/docker/api/types/image"
 	"github.com/docker/docker/client"
 	"github.com/docker/docker/pkg/jsonmessage"
 	"github.com/moby/go-archive"
@@ -133,6 +134,17 @@ func SaveImageToFile(configuration *config.Configuration, revision int32) (strin
 		imageName = imageName + fmt.Sprintf(":%d", revision)
 	}
 	responseBody, err := cli.ImageSave(ctx, []string{imageName})
+	if err != nil && err.Error() == "Error response from daemon: No such image: "+imageName {
+		// try to pull the image and retry the ImageSave (needed when the image declared is not build locally)
+		var out io.ReadCloser
+		out, err = cli.ImagePull(ctx, imageName, image.PullOptions{})
+		if err != nil {
+			return "", err
+		}
+		defer out.Close()
+		_ = jsonmessage.DisplayJSONMessagesStream(out, os.Stdout, os.Stdout.Fd(), false, nil)
+		responseBody, err = cli.ImageSave(ctx, []string{imageName})
+	}
 	if err != nil {
 		return "", err
 	}
