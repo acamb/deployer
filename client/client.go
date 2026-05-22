@@ -154,7 +154,7 @@ func Revisions(name string) ([]string, error) {
 	return revisions.Revisions, nil
 }
 
-func Ports(name string, port *int32) ([]protocol.Port, error) {
+func Ports(name string, revision *int32, port *int32) ([]protocol.Port, error) {
 	request := protocol.Request{
 		Name:    name,
 		Command: protocol.Ports,
@@ -162,6 +162,9 @@ func Ports(name string, port *int32) ([]protocol.Port, error) {
 	}
 	if port != nil && *port > 0 {
 		request.Port = fmt.Sprint(*port)
+	}
+	if revision != nil {
+		request.Revision = fmt.Sprint(*revision)
 	}
 	if err := encoder.Encode(&request); err != nil {
 		return nil, err

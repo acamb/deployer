@@ -266,7 +266,11 @@ func handleRequest(dataChannel ssh.Channel) {
 		}
 		_ = handleResponse(fmt.Sprintf("Image imported successfully"), protocol.Ok, encoder)
 	} else if request.Command == protocol.Ports {
-		ports, err := getPortsBinding(request.Name, request.Port)
+		name := request.Name
+		if request.Revision != "" {
+			name = name + "-" + request.Revision
+		}
+		ports, err := getPortsBinding(name, request.Port)
 		if err != nil {
 			_ = handleResponse(fmt.Sprintf("Error retrieving ports: %v", err), protocol.Ko, encoder)
 		}
@@ -395,7 +399,7 @@ func getPortsBinding(name string, port string) ([]protocol.Port, error) {
 		dockerPortCommand = append(dockerPortCommand, port)
 	}
 	cmd := exec.Command("docker", dockerPortCommand...)
-	cmd.Dir = config.WorkingDirectory + "/" + name
+	cmd.Dir = config.WorkingDirectory
 	output, err := cmd.CombinedOutput()
 	if err != nil {
 		return nil, errors.New("Error retrieving ports binding: " + err.Error() + ". Output: " + string(output))

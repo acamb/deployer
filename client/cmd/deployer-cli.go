@@ -240,7 +240,7 @@ func main() {
 		Short: "List ports (and mappings) for a container",
 		Run: func(cmd *cobra.Command, args []string) {
 			Connect(configuration)
-			ports, err := client.Ports(configuration.Name, port)
+			ports, err := client.Ports(configuration.Name, revision, port)
 			if err != nil {
 				log.Fatal(err)
 			}
