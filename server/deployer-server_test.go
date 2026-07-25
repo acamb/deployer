@@ -1820,3 +1820,149 @@ func TestHandleSSHConnection(t *testing.T) {
 		})
 	}
 }
+
+func TestWriteEphemeralPrivateKey(t *testing.T) {
+	keyData := []byte("super-secret-key-content")
+	// Copy because writeEphemeralPrivateKey zeros the buffer on cleanup.
+	keyCopy := make([]byte, len(keyData))
+	copy(keyCopy, keyData)
+
+	path, cleanup, err := writeEphemeralPrivateKey(keyCopy)
+	require.NoError(t, err)
+	require.NotEmpty(t, path)
+	require.NotNil(t, cleanup)
+
+	// File exists with 0600 permissions and correct content.
+	info, err := os.Stat(path)
+	require.NoError(t, err)
+	assert.Equal(t, os.FileMode(0600), info.Mode().Perm())
+
+	got, err := os.ReadFile(path)
+	require.NoError(t, err)
+	assert.Equal(t, keyData, got)
+
+	cleanup()
+
+	// File removed and in-memory buffer zeroed.
+	_, statErr := os.Stat(path)
+	assert.True(t, os.IsNotExist(statErr))
+	for _, b := range keyCopy {
+		assert.Equal(t, byte(0), b)
+	}
+}
+
+func TestBuildStartCommand_NoEkvs(t *testing.T) {
+	setupTestEnvironment(t)
+	name, args, cleanup, err := buildStartCommand(protocol.Request{Name: "x"})
+	require.NoError(t, err)
+	assert.Nil(t, cleanup)
+	assert.Equal(t, "docker", name)
+	assert.Equal(t, []string{"compose", "up", "-d"}, args)
+}
+
+func TestBuildStartCommand_WithEkvs(t *testing.T) {
+	setupTestEnvironment(t)
+	config.EkvsBin = "/usr/local/bin/ekvs"
+	defer func() { config.EkvsBin = "" }()
+
+	req := protocol.Request{
+		Name:           "x",
+		EkvsEnable:     true,
+		EkvsServer:     "https://ekvs.example.com",
+		EkvsProject:    "myproj",
+		EkvsPrivateKey: []byte("key-bytes"),
+	}
+	name, args, cleanup, err := buildStartCommand(req)
+	require.NoError(t, err)
+	require.NotNil(t, cleanup)
+	defer cleanup()
+
+	assert.Equal(t, "/usr/local/bin/ekvs", name)
+	// Expected pattern: --server URL --identity <tmp> exec proj -- docker compose up -d
+	require.GreaterOrEqual(t, len(args), 9)
+	assert.Equal(t, "--server", args[0])
+	assert.Equal(t, "https://ekvs.example.com", args[1])
+	assert.Equal(t, "--identity", args[2])
+	assert.FileExists(t, args[3])
+	assert.Equal(t, "exec", args[4])
+	assert.Equal(t, "myproj", args[5])
+	assert.Equal(t, "--", args[6])
+	assert.Equal(t, "docker", args[7])
+	assert.Equal(t, "compose", args[8])
+	assert.Equal(t, "up", args[9])
+	assert.Equal(t, "-d", args[10])
+}
+
+func TestBuildStartCommand_EkvsDefaultsToPath(t *testing.T) {
+	setupTestEnvironment(t)
+	// EkvsBin not set → fallback to "ekvs" from PATH.
+	name, args, cleanup, err := buildStartCommand(protocol.Request{
+		Name:           "x",
+		EkvsEnable:     true,
+		EkvsServer:     "https://ekvs.example.com",
+		EkvsProject:    "myproj",
+		EkvsPrivateKey: []byte("key-bytes"),
+	})
+	require.NoError(t, err)
+	defer cleanup()
+	assert.Equal(t, "ekvs", name)
+	_ = args
+}
+
+func TestBuildStartCommand_EkvsMissingKey(t *testing.T) {
+	setupTestEnvironment(t)
+	_, _, _, err := buildStartCommand(protocol.Request{
+		Name:        "x",
+		EkvsEnable:  true,
+		EkvsServer:  "https://ekvs.example.com",
+		EkvsProject: "myproj",
+	})
+	assert.Error(t, err)
+	assert.Contains(t, err.Error(), "no private key")
+}
+
+func TestBuildStartCommand_EkvsMissingServer(t *testing.T) {
+	setupTestEnvironment(t)
+	_, _, _, err := buildStartCommand(protocol.Request{
+		Name:           "x",
+		EkvsEnable:     true,
+		EkvsProject:    "myproj",
+		EkvsPrivateKey: []byte("k"),
+	})
+	assert.Error(t, err)
+	assert.Contains(t, err.Error(), "no server")
+}
+
+func TestBuildStartCommand_EkvsMissingProject(t *testing.T) {
+	setupTestEnvironment(t)
+	_, _, _, err := buildStartCommand(protocol.Request{
+		Name:           "x",
+		EkvsEnable:     true,
+		EkvsServer:     "https://ekvs.example.com",
+		EkvsPrivateKey: []byte("k"),
+	})
+	assert.Error(t, err)
+	assert.Contains(t, err.Error(), "no project")
+}
+
+func TestStartContainer_EkvsCommandNotFound(t *testing.T) {
+	setupTestEnvironment(t)
+	containerName := "ekvs-app"
+	require.NoError(t, os.MkdirAll(config.WorkingDirectory+"/"+containerName, 0770))
+
+	// Point EkvsBin to a nonexistent binary so the exec fails and the error
+	// is propagated up to the caller (and consequently to the client).
+	config.EkvsBin = filepath.Join(t.TempDir(), "nonexistent-ekvs")
+	defer func() { config.EkvsBin = "" }()
+
+	err := startContainer(protocol.Request{
+		Name:           containerName,
+		EkvsEnable:     true,
+		EkvsServer:     "https://ekvs.example.com",
+		EkvsProject:    "myproj",
+		EkvsPrivateKey: []byte("key-bytes"),
+		ComposeFile:    []byte("services:\n  ekvs-app:\n    image: nginx\n"),
+	})
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "Error starting container")
+}

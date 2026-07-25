@@ -64,6 +64,14 @@ type Request struct {
 	DeleteFiles bool
 	Prune       bool
 	Port        string // only used in Ports command
+	// EKVS integration: these fields are optional and are populated only
+	// when the client has EKVS enabled (see client/config).
+	// They accompany requests that start a container (Deploy, Start, Restart)
+	// so the server can invoke `ekvs cli ... exec` to inject secrets.
+	EkvsEnable     bool
+	EkvsServer     string
+	EkvsProject    string
+	EkvsPrivateKey []byte
 }
 
 func (r Request) String() string {

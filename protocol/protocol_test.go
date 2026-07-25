@@ -215,6 +215,30 @@ func TestRequestResponseSequence(t *testing.T) {
 	assert.Equal(t, response, receivedResponse)
 }
 
+func TestRequestGobEncoding_WithEkvsFields(t *testing.T) {
+	original := Request{
+		Command:        Deploy,
+		Name:           "ekvs-app",
+		TarSize:        123,
+		ComposeFile:    []byte("services:\n  app:\n    image: nginx"),
+		EkvsEnable:     true,
+		EkvsServer:     "https://ekvs.example.com",
+		EkvsProject:    "myproj",
+		EkvsPrivateKey: []byte("-----BEGIN PRIVATE KEY-----\nabc\n-----END PRIVATE KEY-----"),
+	}
+
+	var buf bytes.Buffer
+	require.NoError(t, gob.NewEncoder(&buf).Encode(&original))
+
+	var decoded Request
+	require.NoError(t, gob.NewDecoder(&buf).Decode(&decoded))
+
+	assert.Equal(t, original.EkvsEnable, decoded.EkvsEnable)
+	assert.Equal(t, original.EkvsServer, decoded.EkvsServer)
+	assert.Equal(t, original.EkvsProject, decoded.EkvsProject)
+	assert.Equal(t, original.EkvsPrivateKey, decoded.EkvsPrivateKey)
+}
+
 // Benchmark tests
 func BenchmarkRequestGobEncoding(b *testing.B) {
 	request := Request{

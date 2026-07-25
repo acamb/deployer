@@ -393,6 +393,74 @@ You can specify the build method in the client configuration file:
 build_method: dockerfile  # or 'compose', defalt is 'dockerfile'
 ```
 
+## EKVS Integration
+
+Deployer can optionally integrate with [EKVS](https://github.com/acamb/ekvs)
+(Easy Key Value Store) to inject secrets into the container environment at
+start time. When enabled on the client, Deployer wraps the remote
+`docker compose up -d` command with `ekvs cli ... exec`, so that secrets
+stored in EKVS are exported as environment variables and picked up by the
+compose file.
+
+### Prerequisites
+- An EKVS server reachable from the deployer server.
+- The client's EKVS public key already registered on the EKVS server
+  (under `/data/.keys/`) and the target project already created. Deployer
+  does **not** create users or projects on EKVS automatically.
+- The `ekvs` CLI installed on the deployer **server**. By default it is
+  looked up in `PATH`; you can override it via `ekvs_bin` in the server
+  configuration.
+
+### Server configuration (optional)
+```yaml
+# /opt/deployer/config.yaml
+# ...
+ekvs_bin: /usr/local/bin/ekvs   # optional; defaults to `ekvs` from PATH
+```
+
+### Client configuration
+```yaml
+# client-config.yaml
+host: your-server-host
+port: 7676
+name: myapp
+image_name: myapp:latest
+
+ekvs_enable: true
+ekvs_server: https://ekvs.example.com
+ekvs_project: myapp
+ekvs_private_key: /path/to/ekvs_private_key
+```
+
+When `ekvs_enable: true`, the client reads `ekvs_private_key` and sends its
+contents to the deployer server on every `deploy`, `start` and `restart`
+command. The server writes the key to a temporary file with `0600`
+permissions, uses it to invoke `ekvs cli`, and removes the file immediately
+afterwards. The key is **never** persisted on the server nor logged.
+
+### Compose file
+Reference the secrets in your `compose.yml` as regular environment
+variables — EKVS will populate them before `docker compose up` runs:
+
+```yaml
+services:
+  myapp:
+    image: myapp:latest
+    environment:
+      - DB_PASSWORD
+      - API_TOKEN
+```
+
+### Security notes
+- The private key is transmitted over the SSH channel between client and
+  server, which is already encrypted; nevertheless it is transmitted on
+  every container-starting operation. Keep the key file with `600`
+  permissions on the client.
+- The server-side temporary key file is removed via `defer` even if the
+  underlying command panics.
+- Errors reported by `ekvs` (including EKVS server URLs) are forwarded to
+  the client verbatim.
+
 ## Troubleshooting
 
 ### Authentication Errors

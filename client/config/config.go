@@ -40,6 +40,11 @@ type Configuration struct {
 	ComposePath     string      `yaml:"compose_file_path"`
 	BuildMethod     BuildMethod `yaml:"build_method"`
 	EnableRevisions bool        `yaml:"enable_revisions"`
+
+	EkvsEnable     bool   `yaml:"ekvs_enable"`
+	EkvsServer     string `yaml:"ekvs_server"`
+	EkvsProject    string `yaml:"ekvs_project"`
+	EkvsPrivateKey string `yaml:"ekvs_private_key"`
 }
 
 func ReadConfiguration(filePath string) (*Configuration, error) {
@@ -69,7 +74,40 @@ func ReadConfiguration(filePath string) (*Configuration, error) {
 		log.Fatal("Error: enable_revisions cannot be true when image_name contains a tag. Please remove the tag from image_name.")
 	}
 
+	if err := validateEkvs(config); err != nil {
+		return nil, err
+	}
+
 	return config, nil
+}
+
+func validateEkvs(config *Configuration) error {
+	if !config.EkvsEnable {
+		return nil
+	}
+	if strings.TrimSpace(config.EkvsServer) == "" {
+		return fmt.Errorf("ekvs_enable is true but ekvs_server is not set")
+	}
+	if strings.TrimSpace(config.EkvsProject) == "" {
+		return fmt.Errorf("ekvs_enable is true but ekvs_project is not set")
+	}
+	if strings.TrimSpace(config.EkvsPrivateKey) == "" {
+		return fmt.Errorf("ekvs_enable is true but ekvs_private_key is not set")
+	}
+	info, err := os.Stat(config.EkvsPrivateKey)
+	if err != nil {
+		return fmt.Errorf("cannot access ekvs_private_key file %q: %v", config.EkvsPrivateKey, err)
+	}
+	if info.IsDir() {
+		return fmt.Errorf("ekvs_private_key %q is a directory, expected a file", config.EkvsPrivateKey)
+	}
+
+	f, err := os.Open(config.EkvsPrivateKey)
+	if err != nil {
+		return fmt.Errorf("cannot read ekvs_private_key file %q: %v", config.EkvsPrivateKey, err)
+	}
+	_ = f.Close()
+	return nil
 }
 
 func readYaml(path string, config *Configuration) error {
@@ -105,6 +143,13 @@ image_name: myapp:latest
 #build_method: 'docker'
 #enable_revisions will manage different revisions for the same project, useful for zero-downtime deployments and rollbacks.
 #enable_revisions: true
+##EKVS integration (optional): inject secrets from an EKVS server into the
+##container environment. When ekvs_enable is true, ekvs_server, ekvs_project
+##and ekvs_private_key are required.
+#ekvs_enable: false
+#ekvs_server: 'https://ekvs.example.com'
+#ekvs_project: 'my-project'
+#ekvs_private_key: '/path/to/ekvs_private_key'
 `))
 	return err
 }

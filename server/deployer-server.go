@@ -586,13 +586,90 @@ func startContainer(request protocol.Request) error {
 	if TestingMode {
 		return nil
 	}
-	cmd := exec.Command("docker", "compose", "up", "-d")
+	cmdName, cmdArgs, cleanup, err := buildStartCommand(request)
+	if err != nil {
+		return err
+	}
+	if cleanup != nil {
+		defer cleanup()
+	}
+	cmd := exec.Command(cmdName, cmdArgs...)
 	cmd.Dir = getWorkingDirectory(request)
 	output, err := cmd.CombinedOutput()
 	if err != nil {
 		return errors.New("Error starting container: " + err.Error() + ". Output: " + string(output))
 	}
 	return nil
+}
+
+// buildStartCommand returns the executable, argv, and an optional cleanup
+// function to run after the command completes. When EKVS is enabled on the
+// request, the command is wrapped with `ekvs cli ... exec` so that secrets
+// are injected into the container environment.
+func buildStartCommand(request protocol.Request) (string, []string, func(), error) {
+	if !request.EkvsEnable {
+		return "docker", []string{"compose", "up", "-d"}, nil, nil
+	}
+	if len(request.EkvsPrivateKey) == 0 {
+		return "", nil, nil, errors.New("EKVS is enabled but no private key was provided")
+	}
+	if strings.TrimSpace(request.EkvsServer) == "" {
+		return "", nil, nil, errors.New("EKVS is enabled but no server was provided")
+	}
+	if strings.TrimSpace(request.EkvsProject) == "" {
+		return "", nil, nil, errors.New("EKVS is enabled but no project was provided")
+	}
+	ekvsBin := "ekvs"
+	if config != nil && strings.TrimSpace(config.EkvsBin) != "" {
+		ekvsBin = config.EkvsBin
+	}
+	keyPath, cleanup, err := writeEphemeralPrivateKey(request.EkvsPrivateKey)
+	if err != nil {
+		return "", nil, nil, err
+	}
+	args := []string{
+		"--server", request.EkvsServer,
+		"--identity", keyPath,
+		"exec", request.EkvsProject,
+		"--",
+		"docker", "compose", "up", "-d",
+	}
+	return ekvsBin, args, cleanup, nil
+}
+
+// writeEphemeralPrivateKey writes the given key bytes to a temporary file
+// with mode 0600 and returns its path together with a cleanup function.
+// The cleanup function must be invoked (typically via defer) to remove the
+// file and zero the in-memory copy of the key bytes.
+func writeEphemeralPrivateKey(key []byte) (string, func(), error) {
+	f, err := os.CreateTemp("", "deployer-ekvs-key-*")
+	if err != nil {
+		return "", nil, errors.New("cannot create temporary EKVS key file: " + err.Error())
+	}
+	// Ensure restrictive permissions before writing.
+	if err := os.Chmod(f.Name(), 0600); err != nil {
+		_ = f.Close()
+		_ = os.Remove(f.Name())
+		return "", nil, errors.New("cannot set permissions on EKVS key file: " + err.Error())
+	}
+	if _, err := f.Write(key); err != nil {
+		_ = f.Close()
+		_ = os.Remove(f.Name())
+		return "", nil, errors.New("cannot write EKVS key file: " + err.Error())
+	}
+	if err := f.Close(); err != nil {
+		_ = os.Remove(f.Name())
+		return "", nil, errors.New("cannot close EKVS key file: " + err.Error())
+	}
+	path := f.Name()
+	cleanup := func() {
+		// Best-effort: remove the file and zero the caller-provided buffer.
+		_ = os.Remove(path)
+		for i := range key {
+			key[i] = 0
+		}
+	}
+	return path, cleanup, nil
 }
 
 func handleResponse(message string, status protocol.Status, encoder *gob.Encoder) error {

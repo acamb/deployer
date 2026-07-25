@@ -2,3 +2,7 @@ port: 7676
 listenAddress: 0.0.0.0
 workingDirectory: /opt/deployer
 hostKeyPath: /opt/deployer/host_rsa_key
+# Optional path to the `ekvs` CLI binary used for EKVS secret injection.
+# When unset, the server uses `ekvs` from PATH.
+# ekvs_bin: /usr/local/bin/ekvs
+

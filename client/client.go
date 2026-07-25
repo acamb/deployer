@@ -29,7 +29,10 @@ var dataChannel ssh.Channel
 var encoder *gob.Encoder
 var decoder *gob.Decoder
 
+var currentConfig config.Configuration
+
 func Connect(configuration config.Configuration) error {
+	currentConfig = configuration
 	privateKey, err := loadPrivateKey(configuration)
 	if err != nil {
 		return err
@@ -213,6 +216,19 @@ func handleRequest(name string,
 	}
 	if deleteFiles {
 		request.DeleteFiles = true
+	}
+
+	// Populate EKVS fields for commands that will start a container.
+	if currentConfig.EkvsEnable &&
+		(req == protocol.Deploy || req == protocol.Start || req == protocol.Restart) {
+		keyBytes, keyErr := os.ReadFile(currentConfig.EkvsPrivateKey)
+		if keyErr != nil {
+			return fmt.Errorf("cannot read EKVS private key %q: %v", currentConfig.EkvsPrivateKey, keyErr)
+		}
+		request.EkvsEnable = true
+		request.EkvsServer = currentConfig.EkvsServer
+		request.EkvsProject = currentConfig.EkvsProject
+		request.EkvsPrivateKey = keyBytes
 	}
 
 	if composeFile != nil {

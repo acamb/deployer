@@ -1,9 +1,10 @@
 package config
 
 import (
-	"gopkg.in/yaml.v2"
 	"io"
 	"os"
+
+	"gopkg.in/yaml.v2"
 )
 
 type ServerConfiguration struct {
@@ -11,6 +12,10 @@ type ServerConfiguration struct {
 	ListenAddress    string `yaml:"listenAddress"`
 	WorkingDirectory string `yaml:"workingDirectory"`
 	HostKeyPath      string `yaml:"hostKeyPath"`
+	// optional absolute path to the `ekvs` CLI binary used to
+	// inject secrets when a client requests it. When empty the server
+	// resolves `ekvs` from PATH.
+	EkvsBin string `yaml:"ekvs_bin"`
 }
 
 func ReadServerConfiguration(filePath string) (*ServerConfiguration, error) {
