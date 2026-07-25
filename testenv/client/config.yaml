@@ -2,7 +2,11 @@
 host: localhost
 port: 7676
 name: test
-image_name: nginx:alpine
+image_name: test
 build_method: compose
-#private_key: /home/andrea/.ssh/id_ed25519
+#private_key: ~/.ssh/id_ed25519
 #enable_revisions: true
+ekvs_enable: true
+ekvs_server: http://webapp.local:9000
+ekvs_project: test
+#ekvs_private_key: ~/.ssh/ekvs

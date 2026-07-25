@@ -2,6 +2,7 @@ package config
 
 import (
 	"os"
+	"path/filepath"
 	"testing"
 )
 
@@ -183,5 +184,126 @@ ekvs_enable: false
 	}
 	if cfg.EkvsEnable {
 		t.Errorf("EkvsEnable should be false")
+	}
+}
+
+func TestExpandHome(t *testing.T) {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		t.Fatalf("cannot get home dir: %v", err)
+	}
+	cases := map[string]string{
+		"~":         home,
+		"~/":        home + "/",
+		"~/foo/bar": home + "/foo/bar",
+		"/abs/path": "/abs/path",
+		"relative":  "relative",
+		"~user/x":   "~user/x", // only ~ and ~/ are expanded
+		"":          "",
+	}
+	for in, want := range cases {
+		got, err := expandHome(in)
+		if err != nil {
+			t.Fatalf("expandHome(%q) error: %v", in, err)
+		}
+		if got != want {
+			t.Errorf("expandHome(%q) = %q, want %q", in, got, want)
+		}
+	}
+}
+
+func TestReadConfiguration_ExpandsHomeInKeyPaths(t *testing.T) {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		t.Fatalf("cannot get home dir: %v", err)
+	}
+	// Create a temp key inside HOME so ekvs validation passes.
+	tmpKey, err := os.CreateTemp(home, "ekvs-key-*")
+	if err != nil {
+		t.Fatalf("cannot create temp key in home: %v", err)
+	}
+	_, _ = tmpKey.WriteString("dummy")
+	_ = tmpKey.Close()
+	defer os.Remove(tmpKey.Name())
+
+	rel := "~/" + filepath.Base(tmpKey.Name())
+	yamlContent := `
+name: "app"
+private_key: "~/.ssh/id_rsa"
+ekvs_enable: true
+ekvs_server: "https://ekvs.example.com"
+ekvs_project: "proj"
+ekvs_private_key: "` + rel + `"
+`
+	path := writeTempConfig(t, yamlContent)
+	defer os.Remove(path)
+
+	cfg, err := ReadConfiguration(path)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if cfg.PrivateKey != home+"/.ssh/id_rsa" {
+		t.Errorf("private_key not expanded, got: %q", cfg.PrivateKey)
+	}
+	if cfg.EkvsPrivateKey != tmpKey.Name() {
+		t.Errorf("ekvs_private_key not expanded correctly, got %q want %q", cfg.EkvsPrivateKey, tmpKey.Name())
+	}
+}
+
+func TestReadConfiguration_EkvsFallbackToPrivateKey(t *testing.T) {
+	tmpKey, err := os.CreateTemp("", "pk-*")
+	if err != nil {
+		t.Fatalf("cannot create temp key: %v", err)
+	}
+	_, _ = tmpKey.WriteString("dummy")
+	_ = tmpKey.Close()
+	defer os.Remove(tmpKey.Name())
+
+	yamlContent := `
+name: "app"
+private_key: "` + tmpKey.Name() + `"
+ekvs_enable: true
+ekvs_server: "https://ekvs.example.com"
+ekvs_project: "proj"
+`
+	path := writeTempConfig(t, yamlContent)
+	defer os.Remove(path)
+
+	cfg, err := ReadConfiguration(path)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if cfg.EkvsPrivateKey != tmpKey.Name() {
+		t.Errorf("expected ekvs_private_key to fall back to private_key %q, got %q", tmpKey.Name(), cfg.EkvsPrivateKey)
+	}
+}
+
+func TestReadConfiguration_EkvsEnabledNoKeysAtAll(t *testing.T) {
+	// When neither ekvs_private_key nor private_key is set, EKVS validation
+	// must fall back to the auto-discovered default SSH key. If no such key
+	// exists on this system, the test is skipped (behavior would be an error).
+	discovered, discoverErr := FindDefaultSSHKey()
+
+	yamlContent := `
+name: "app"
+ekvs_enable: true
+ekvs_server: "https://ekvs.example.com"
+ekvs_project: "proj"
+`
+	path := writeTempConfig(t, yamlContent)
+	defer os.Remove(path)
+
+	cfg, err := ReadConfiguration(path)
+	if discoverErr != nil {
+		if err == nil {
+			t.Fatal("Expecting error when no keys are set and no default SSH key exists")
+		}
+		return
+	}
+	if err != nil {
+		t.Fatalf("unexpected error with auto-discovered SSH key: %v", err)
+	}
+	if cfg.EkvsPrivateKey != discovered {
+		t.Errorf("expected ekvs_private_key to fall back to auto-discovered SSH key %q, got %q", discovered, cfg.EkvsPrivateKey)
 	}
 }

@@ -310,28 +310,11 @@ func loadPrivateKey(configuration config.Configuration) (ssh.Signer, error) {
 	if configuration.PrivateKey != "" {
 		privateKeyPath = configuration.PrivateKey
 	} else {
-
-		homeDir, err := os.UserHomeDir()
+		path, err := config.FindDefaultSSHKey()
 		if err != nil {
-			return nil, fmt.Errorf("failed to get home directory: %v", err)
+			return nil, err
 		}
-
-		// Try different key types in order of preference
-		keyTypes := []string{"id_ed25519", "id_ecdsa", "id_rsa", "id_dsa"}
-		sshDir := filepath.Join(homeDir, ".ssh")
-
-		for _, keyType := range keyTypes {
-			keyPath := filepath.Join(sshDir, keyType)
-			if _, err := os.Stat(keyPath); err == nil {
-				privateKeyPath = keyPath
-				break
-			}
-		}
-
-		if privateKeyPath == "" {
-			return nil, fmt.Errorf("no SSH private key found in %s (tried: %v)", sshDir, keyTypes)
-		}
-
+		privateKeyPath = path
 	}
 	keyBytes, err := os.ReadFile(privateKeyPath)
 	if err != nil {

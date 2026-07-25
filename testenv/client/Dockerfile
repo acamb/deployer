@@ -1,3 +1,2 @@
 from ubuntu
-CMD touch /pippo5
-CMD ["sleep", "infinity"]
+CMD env; sleep infinity

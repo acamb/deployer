@@ -2,9 +2,10 @@ FROM docker:cli
 ARG SSH_PUBLIC_KEY
 ARG HOST_RSA_KEY
 
-RUN apk add --no-cache bash
+RUN apk add --no-cache bash wget
+RUN wget https://github.com/acamb/ekvs/releases/latest/download/cli-static -O /usr/bin/ekvs && chmod +x /usr/bin/ekvs
 
-# Crea utente e directory
+# Create user and directory
 RUN addgroup -S deployer-server && \
     adduser -S -D -H -G deployer-server -s /sbin/nologin deployer-server && \
     mkdir -p /opt/deployer && chown deployer-server:deployer-server /opt/deployer && \
@@ -13,7 +14,7 @@ RUN addgroup -S deployer-server && \
     printf "port: 7676\nlistenAddress: 0.0.0.0\nworkingDirectory: /opt/deployer\nhostKeyPath: /opt/deployer/host_rsa_key\n" > /opt/deployer/config.yaml && \
     chown deployer-server:deployer-server /opt/deployer/config.yaml
 
-# Chiavi SSH autorizzate
+# Authorized SSH keys
 RUN printf "%s" "${SSH_PUBLIC_KEY}" > /opt/deployer/authorized_keys && \
     chown deployer-server:deployer-server /opt/deployer/authorized_keys && \
     chmod 600 /opt/deployer/authorized_keys

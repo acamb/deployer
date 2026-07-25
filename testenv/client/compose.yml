@@ -1,6 +1,10 @@
 services:
   test:
-    image: nginx:alpine
+    image: test
     container_name: test
-    ports:
-      - "8080:80"
+    build:
+      context: .
+      dockerfile: Dockerfile
+    environment:
+      TEST_SECRET_1: "${TEST_SECRET_1}"
+      TEST_SECRET_2: "${TEST_SECRET_2}"

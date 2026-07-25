@@ -1,0 +1,8 @@
+services:
+  ekvs-server:
+    image: acamb23/ekvs:latest
+    ports:
+      - "9000:8080"
+    volumes:
+      - ./data:/ekvs/data
+      - ./ekvs.yaml:/ekvs/ekvs.yaml
