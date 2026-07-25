@@ -25,3 +25,5 @@
     Added 'Ports' command to list all ports currently in use by containers and their mapping to the host.
     Fixed deploy commands with images not built locally (previously remote images were not pulled)
     Added more test & coverage on server code
+0.7.0 2026/07/25:
+    Added EKVS integration to inject secrets into containers.
