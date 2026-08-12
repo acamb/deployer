@@ -106,7 +106,7 @@ name: "ekvs-app"
 ekvs_enable: true
 ekvs_server: "https://ekvs.example.com"
 ekvs_project: "proj"
-ekvs_private_key: "` + tmpKey.Name() + `"
+ekvs_private_key: "` + filepath.ToSlash(tmpKey.Name()) + `"
 `
 	path := writeTempConfig(t, yamlContent)
 	defer os.Remove(path)
@@ -116,7 +116,8 @@ ekvs_private_key: "` + tmpKey.Name() + `"
 		t.Fatalf("unexpected error: %v", err)
 	}
 	if !cfg.EkvsEnable || cfg.EkvsServer != "https://ekvs.example.com" ||
-		cfg.EkvsProject != "proj" || cfg.EkvsPrivateKey != tmpKey.Name() {
+		cfg.EkvsProject != "proj" ||
+		filepath.ToSlash(cfg.EkvsPrivateKey) != filepath.ToSlash(tmpKey.Name()) {
 		t.Errorf("EKVS fields not parsed correctly: %+v", cfg)
 	}
 }
@@ -246,7 +247,10 @@ ekvs_private_key: "` + rel + `"
 	if cfg.PrivateKey != home+"/.ssh/id_rsa" {
 		t.Errorf("private_key not expanded, got: %q", cfg.PrivateKey)
 	}
-	if cfg.EkvsPrivateKey != tmpKey.Name() {
+	// Compare with normalized separators: expandHome concatenates instead of
+	// using filepath.Join, so on Windows it yields "C:\Users\me/file". The
+	// path still resolves; only its spelling differs.
+	if filepath.ToSlash(cfg.EkvsPrivateKey) != filepath.ToSlash(tmpKey.Name()) {
 		t.Errorf("ekvs_private_key not expanded correctly, got %q want %q", cfg.EkvsPrivateKey, tmpKey.Name())
 	}
 }
@@ -262,7 +266,7 @@ func TestReadConfiguration_EkvsFallbackToPrivateKey(t *testing.T) {
 
 	yamlContent := `
 name: "app"
-private_key: "` + tmpKey.Name() + `"
+private_key: "` + filepath.ToSlash(tmpKey.Name()) + `"
 ekvs_enable: true
 ekvs_server: "https://ekvs.example.com"
 ekvs_project: "proj"
@@ -274,7 +278,7 @@ ekvs_project: "proj"
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if cfg.EkvsPrivateKey != tmpKey.Name() {
+	if filepath.ToSlash(cfg.EkvsPrivateKey) != filepath.ToSlash(tmpKey.Name()) {
 		t.Errorf("expected ekvs_private_key to fall back to private_key %q, got %q", tmpKey.Name(), cfg.EkvsPrivateKey)
 	}
 }

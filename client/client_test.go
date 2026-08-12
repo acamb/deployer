@@ -17,6 +17,15 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+// setHomeDir points home-directory lookups at dir. os.UserHomeDir() reads HOME
+// on unix but USERPROFILE on Windows, so both must be set for the auto-discovery
+// tests to see the temporary .ssh directory instead of the real one.
+func setHomeDir(t *testing.T, dir string) {
+	t.Helper()
+	t.Setenv("HOME", dir)
+	t.Setenv("USERPROFILE", dir)
+}
+
 // Helper functions for generating SSH keys dynamically
 
 func generateEd25519Key(t *testing.T, path string) {
@@ -92,7 +101,7 @@ func TestLoadPrivateKeyAutoDiscovery(t *testing.T) {
 	keyPath := filepath.Join(sshDir, "id_rsa")
 	generateRSAKey(t, keyPath)
 
-	t.Setenv("HOME", tempDir)
+	setHomeDir(t, tempDir)
 
 	config := config.Configuration{}
 
@@ -109,7 +118,7 @@ func TestLoadPrivateKeyPriority(t *testing.T) {
 
 	rsaPath := filepath.Join(sshDir, "id_rsa")
 	generateRSAKey(t, rsaPath)
-	t.Setenv("HOME", tempDir)
+	setHomeDir(t, tempDir)
 
 	// Test that it finds RSA key when only RSA is available
 	config := config.Configuration{}
@@ -135,7 +144,7 @@ func TestLoadPrivateKeyEd25519Priority(t *testing.T) {
 	ed25519Path := filepath.Join(sshDir, "id_ed25519")
 	generateEd25519Key(t, ed25519Path)
 
-	t.Setenv("HOME", tempDir)
+	setHomeDir(t, tempDir)
 
 	// Test that it picks Ed25519 key (highest priority)
 	config := config.Configuration{}
@@ -156,7 +165,7 @@ func TestLoadPrivateKeyECDSAOverRSA(t *testing.T) {
 	generateRSAKey(t, rsaPath)
 	ecdsaPath := filepath.Join(sshDir, "id_ecdsa")
 	generateECDSAKey(t, ecdsaPath)
-	t.Setenv("HOME", tempDir)
+	setHomeDir(t, tempDir)
 
 	// Test that it picks ECDSA key over RSA
 	config := config.Configuration{}
@@ -173,8 +182,7 @@ func TestLoadPrivateKeyNoKeysFound(t *testing.T) {
 	sshDir := filepath.Join(tempDir, ".ssh")
 	require.NoError(t, os.MkdirAll(sshDir, 0700))
 
-	// Set HOME environment variable
-	t.Setenv("HOME", tempDir)
+	setHomeDir(t, tempDir)
 	config := config.Configuration{}
 
 	signer, err := loadPrivateKey(config)

@@ -4,17 +4,40 @@ import (
 	"context"
 	"deployer/client/config"
 	"encoding/json"
+	"errors"
 	"os"
 	"path/filepath"
 	"testing"
 
+	dockerimage "github.com/docker/docker/api/types/image"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
-func TestGetClientCaching(t *testing.T) {
-	// Reset global client
+// resetClient drops the cached global client and restores it after the test.
+func resetClient(t *testing.T) {
+	t.Helper()
 	dockerClient = nil
+	t.Cleanup(func() { dockerClient = nil })
+}
+
+// requireDocker skips the test unless a Docker daemon is actually reachable.
+func requireDocker(t *testing.T) {
+	t.Helper()
+	ctx := context.Background()
+	cli, err := GetClient(ctx)
+	if err != nil {
+		t.Skip("Docker client not available, skipping integration test:", err)
+	}
+	// NewClientWithOpts does not connect, so an explicit ping is needed to know
+	// whether a daemon is really there.
+	if _, err := cli.Ping(ctx); err != nil {
+		t.Skip("Docker daemon not reachable, skipping integration test:", err)
+	}
+}
+
+func TestGetClientCaching(t *testing.T) {
+	resetClient(t)
 
 	ctx := context.Background()
 
@@ -27,11 +50,8 @@ func TestGetClientCaching(t *testing.T) {
 	// Both calls should have the same result
 	assert.Equal(t, err1 != nil, err2 != nil)
 	if err1 == nil && err2 == nil {
-		assert.Equal(t, client1, client2)
+		assert.Same(t, client1, client2)
 	}
-
-	// Reset for other tests
-	dockerClient = nil
 }
 
 func TestBuildResponseStreamMessageJSON(t *testing.T) {
@@ -64,9 +84,10 @@ func TestBuildResponseStreamMessageEmpty(t *testing.T) {
 
 func TestImportImageFromFileNotFound(t *testing.T) {
 	// Test with non-existent file - should fail before reaching Docker
-	err := ImportImageFromFile("/nonexistent/file.tar")
-	assert.Error(t, err)
-	assert.Contains(t, err.Error(), "no such file or directory")
+	err := ImportImageFromFile(filepath.Join(t.TempDir(), "nonexistent", "file.tar"))
+	require.Error(t, err)
+	// The wording of the OS error is platform dependent, so match on the sentinel.
+	assert.True(t, errors.Is(err, os.ErrNotExist), "expected a not-exist error, got: %v", err)
 }
 
 func TestImportImageFromFileEmptyPath(t *testing.T) {
@@ -92,15 +113,8 @@ func TestBuildImageIntegration(t *testing.T) {
 		t.Skip("Skipping integration test in short mode")
 	}
 
-	// Reset global client to test real Docker client
-	dockerClient = nil
-
-	// Test if Docker is available
-	ctx := context.Background()
-	_, err := GetClient(ctx)
-	if err != nil {
-		t.Skip("Docker not available, skipping integration test")
-	}
+	resetClient(t)
+	requireDocker(t)
 
 	// Create a temporary directory with a simple Dockerfile
 	tempDir := t.TempDir()
@@ -111,24 +125,24 @@ CMD cat /test.txt`
 	dockerfilePath := filepath.Join(tempDir, "Dockerfile")
 	require.NoError(t, os.WriteFile(dockerfilePath, []byte(dockerfileContent), 0644))
 
-	// Change to temp directory
-	originalWd, err := os.Getwd()
-	require.NoError(t, err)
-	defer os.Chdir(originalWd)
-
-	err = os.Chdir(tempDir)
-	require.NoError(t, err)
+	// Build from the temp directory
+	t.Chdir(tempDir)
 
 	configuration := &config.Configuration{
 		ImageName: "test-builder-integration:latest",
 	}
 
 	// This will only pass if Docker is running
-	err = BuildImageWithDocker(configuration)
-	if err != nil {
-		t.Logf("Docker not available or build failed: %v", err)
-		t.Skip("Skipping Docker integration test")
+	if err := BuildImageWithDocker(configuration, -1); err != nil {
+		t.Skipf("Docker build not possible in this environment: %v", err)
 	}
+	t.Cleanup(func() {
+		ctx := context.Background()
+		cli, err := GetClient(ctx)
+		if err == nil {
+			_, _ = cli.ImageRemove(ctx, configuration.ImageName, dockerimage.RemoveOptions{Force: true})
+		}
+	})
 }
 
 func TestSaveImageToFileIntegration(t *testing.T) {
@@ -136,24 +150,12 @@ func TestSaveImageToFileIntegration(t *testing.T) {
 		t.Skip("Skipping integration test in short mode")
 	}
 
-	// Reset global client
-	dockerClient = nil
+	resetClient(t)
+	requireDocker(t)
 
-	// Test if Docker is available
-	ctx := context.Background()
-	_, err := GetClient(ctx)
-	if err != nil {
-		t.Skip("Docker not available, skipping integration test")
-	}
-
-	// Create temp directory
+	// Save into a temp directory
 	tempDir := t.TempDir()
-	originalWd, err := os.Getwd()
-	require.NoError(t, err)
-	defer os.Chdir(originalWd)
-
-	err = os.Chdir(tempDir)
-	require.NoError(t, err)
+	t.Chdir(tempDir)
 
 	// Test configuration
 	configuration := &config.Configuration{
@@ -162,24 +164,19 @@ func TestSaveImageToFileIntegration(t *testing.T) {
 	}
 
 	// Test save
-	file, err := SaveImageToFile(configuration)
+	savedPath, err := SaveImageToFile(configuration, -1)
 	if err != nil {
-		t.Logf("Docker not available or image save failed: %v", err)
-		t.Skip("Skipping Docker integration test")
+		t.Skipf("Image save not possible in this environment: %v", err)
 	}
 
-	if file != nil {
-		defer file.Close()
-		// Verify file was created
-		expectedPath := filepath.Join(tempDir, "test-app.tar")
-		_, err = os.Stat(expectedPath)
-		assert.NoError(t, err)
+	// SaveImageToFile creates the tar in the current directory and returns its
+	// name as passed to os.Create.
+	assert.Equal(t, "test-app.tar", savedPath)
 
-		// Check file is not empty
-		info, err := os.Stat(expectedPath)
-		require.NoError(t, err)
-		assert.Greater(t, info.Size(), int64(0))
-	}
+	// Verify the file was created in the working directory and is not empty
+	info, err := os.Stat(filepath.Join(tempDir, "test-app.tar"))
+	require.NoError(t, err)
+	assert.Greater(t, info.Size(), int64(0))
 }
 
 func TestImportImageFromFileIntegration(t *testing.T) {
@@ -187,15 +184,8 @@ func TestImportImageFromFileIntegration(t *testing.T) {
 		t.Skip("Skipping integration test in short mode")
 	}
 
-	// Reset global client
-	dockerClient = nil
-
-	// Test if Docker is available
-	ctx := context.Background()
-	_, err := GetClient(ctx)
-	if err != nil {
-		t.Skip("Docker not available, skipping integration test")
-	}
+	resetClient(t)
+	requireDocker(t)
 
 	// Create a test tar file with minimal valid tar content
 	tempDir := t.TempDir()
@@ -205,14 +195,12 @@ func TestImportImageFromFileIntegration(t *testing.T) {
 	testContent := "fake docker image tar data"
 	require.NoError(t, os.WriteFile(testFile, []byte(testContent), 0644))
 
-	// Test import (this will likely fail, but tests the file access)
-	err = ImportImageFromFile(testFile)
-	if err != nil {
-		// This is expected with fake data or no Docker daemon
-		// Just verify that an error occurred (could be Docker not available or invalid format)
-		assert.Error(t, err)
-		t.Logf("Expected error occurred: %v", err)
-	}
+	// The file exists, so the failure must come from the daemon rejecting the
+	// payload, not from the file handling.
+	err := ImportImageFromFile(testFile)
+	require.Error(t, err)
+	assert.False(t, errors.Is(err, os.ErrNotExist), "unexpected file access error: %v", err)
+	t.Logf("Expected error occurred: %v", err)
 }
 
 // Benchmark tests

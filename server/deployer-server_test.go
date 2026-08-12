@@ -17,6 +17,7 @@ import (
 	"net"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -25,6 +26,15 @@ import (
 	"github.com/stretchr/testify/require"
 	"golang.org/x/crypto/ssh"
 )
+
+// hasUnixPermissions reports whether the filesystem honours unix mode bits.
+// Windows does not: os.WriteFile(path, data, 0600) still reports 0666, so any
+// check based on mode&0077 can never be satisfied there. The server itself only
+// ever runs on Linux (systemd unit, deb/rpm packages), so the permission checks
+// are simply not exercised on Windows developer machines.
+func hasUnixPermissions() bool {
+	return runtime.GOOS != "windows"
+}
 
 // DuplexMockSSHChannel with separate reader and writeBuf,
 // enabling bidirectional communication for handleRequest.
@@ -352,6 +362,11 @@ func TestLoadHostKey(t *testing.T) {
 }
 
 func TestCheckAuthorizedKey(t *testing.T) {
+	if !hasUnixPermissions() {
+		// checkAuthorizedKey gates on checkFilePermissions, so every accept path
+		// is unreachable on Windows.
+		t.Skip("checkAuthorizedKey requires 0600 authorized_keys, unreachable on Windows")
+	}
 	setupTestEnvironment(t)
 
 	defer cleanupTestKeys(t)
@@ -471,6 +486,9 @@ func TestCheckAuthorizedKey(t *testing.T) {
 }
 
 func TestCheckFilePermissions(t *testing.T) {
+	if !hasUnixPermissions() {
+		t.Skip("checkFilePermissions inspects unix mode bits, which Windows does not have")
+	}
 	tempDir := t.TempDir()
 
 	testCases := []struct {
@@ -723,9 +741,11 @@ func TestSaveComposeFile(t *testing.T) {
 					assert.Equal(t, tc.content, string(savedContent))
 				}
 				// Verify file permissions
-				fileInfo, statErr := os.Stat(filePath)
-				assert.NoError(t, statErr)
-				assert.Equal(t, os.FileMode(0600), fileInfo.Mode())
+				if hasUnixPermissions() {
+					fileInfo, statErr := os.Stat(filePath)
+					assert.NoError(t, statErr)
+					assert.Equal(t, os.FileMode(0600), fileInfo.Mode())
+				}
 			}
 		})
 	}
@@ -1046,7 +1066,7 @@ services:
 				require.NoError(t, err)
 			},
 			expectError:  true, // if this fails with the specified error it's ok
-			errorMessage: "no such file or directory",
+			errorMessage: "Error opening file for writing",
 		},
 		{
 			name: "Empty compose file",
@@ -1071,7 +1091,7 @@ services:
 			containerName: "missing-dir",
 			setupFunc:     func(t *testing.T, containerName string) {},
 			expectError:   true,
-			errorMessage:  "no such file or directory",
+			errorMessage:  "Error opening file for writing",
 		},
 	}
 
@@ -1833,9 +1853,11 @@ func TestWriteEphemeralPrivateKey(t *testing.T) {
 	require.NotNil(t, cleanup)
 
 	// File exists with 0600 permissions and correct content.
-	info, err := os.Stat(path)
-	require.NoError(t, err)
-	assert.Equal(t, os.FileMode(0600), info.Mode().Perm())
+	if hasUnixPermissions() {
+		info, err := os.Stat(path)
+		require.NoError(t, err)
+		assert.Equal(t, os.FileMode(0600), info.Mode().Perm())
+	}
 
 	got, err := os.ReadFile(path)
 	require.NoError(t, err)

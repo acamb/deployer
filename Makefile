@@ -176,3 +176,4 @@ check:
 	cd client/config && go test -v ./... && cd ../..
 	cd server && go test -v ./... && cd ..
 	cd protocol && go test -v ./... && cd ..
+	cd builder && go test -v ./... && cd ..
