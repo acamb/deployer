@@ -4,8 +4,10 @@ import (
 	"fmt"
 	"io"
 	"log"
+	"net/url"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 
 	"gopkg.in/yaml.v2"
@@ -51,6 +53,10 @@ type Configuration struct {
 	// EkvsPrivateKey): when left empty, it means the auth_key referenced
 	// inside ContinuityConfig already points to a key present on the
 	// server, placed there manually by an administrator.
+	// ContinuityAdvertiseBase optionally overrides the deployer server's
+	// own continuity_advertise_base for this project: the base URL, scheme
+	// included and without port, under which the container is reachable by
+	// Continuity. The published Docker port is appended to it.
 	ContinuityEnable          bool   `yaml:"continuity_enable"`
 	ContinuityConfig          string `yaml:"continuity_config"`
 	ContinuityPrivateKey      string `yaml:"continuity_private_key"`
@@ -58,6 +64,19 @@ type Configuration struct {
 	ContinuityHealthCheckPath string `yaml:"continuity_health_check_path"`
 	ContinuityInternalPort    string `yaml:"continuity_internal_port"`
 	ContinuityRemovePrevious  bool   `yaml:"continuity_remove_previous"`
+	ContinuityAdvertiseBase   string `yaml:"continuity_advertise_base"`
+}
+
+// continuityFileConfig mirrors the subset of the native Continuity CLI
+// configuration file that deployer needs to validate before forwarding its
+// contents to the server. Continuity itself does no `~` expansion and builds
+// its endpoint by plain concatenation, so a missing scheme or a non-absolute
+// auth_key can only be detected here.
+type continuityFileConfig struct {
+	Host        string `yaml:"host"`
+	Port        int    `yaml:"port"`
+	DefaultPool string `yaml:"default_pool"`
+	AuthKey     string `yaml:"auth_key"`
 }
 
 func ReadConfiguration(filePath string) (*Configuration, error) {
@@ -150,20 +169,7 @@ func validateEkvs(config *Configuration) error {
 			config.EkvsPrivateKey = discovered
 		}
 	}
-	info, err := os.Stat(config.EkvsPrivateKey)
-	if err != nil {
-		return fmt.Errorf("cannot access ekvs_private_key file %q: %v", config.EkvsPrivateKey, err)
-	}
-	if info.IsDir() {
-		return fmt.Errorf("ekvs_private_key %q is a directory, expected a file", config.EkvsPrivateKey)
-	}
-
-	f, err := os.Open(config.EkvsPrivateKey)
-	if err != nil {
-		return fmt.Errorf("cannot read ekvs_private_key file %q: %v", config.EkvsPrivateKey, err)
-	}
-	_ = f.Close()
-	return nil
+	return checkReadableFile(config.EkvsPrivateKey, "ekvs_private_key")
 }
 
 // validateContinuity validates the Continuity integration fields. Unlike
@@ -182,13 +188,119 @@ func validateContinuity(config *Configuration) error {
 		return err
 	}
 
+	// The server resolves the published Docker port starting from this
+	// internal port: without it there is nothing to look up and the backend
+	// registration would silently find no port at all.
+	if strings.TrimSpace(config.ContinuityInternalPort) == "" {
+		return fmt.Errorf("continuity_enable is true but continuity_internal_port is not set")
+	}
+	port, err := strconv.Atoi(strings.TrimSpace(config.ContinuityInternalPort))
+	if err != nil || port < 1 || port > 65535 {
+		return fmt.Errorf("continuity_internal_port %q is not a valid port number", config.ContinuityInternalPort)
+	}
+
+	// An empty health check path is fine: the continuity CLI already
+	// defaults to /health.
+	if hc := strings.TrimSpace(config.ContinuityHealthCheckPath); hc != "" && !strings.HasPrefix(hc, "/") {
+		return fmt.Errorf("continuity_health_check_path %q must start with '/'", config.ContinuityHealthCheckPath)
+	}
+
+	if err := validateAdvertiseBase(config); err != nil {
+		return err
+	}
+
+	if err := validateContinuityFile(config); err != nil {
+		return err
+	}
+
 	if strings.TrimSpace(config.ContinuityPrivateKey) == "" {
 		return nil
 	}
-	if err := checkReadableFile(config.ContinuityPrivateKey, "continuity_private_key"); err != nil {
-		return err
+	return checkReadableFile(config.ContinuityPrivateKey, "continuity_private_key")
+}
+
+// validateAdvertiseBase normalizes and validates ContinuityAdvertiseBase: it
+// must be a bare origin, because the server appends ":<published-port>" to it
+// to build the backend address. A trailing slash is trimmed rather than
+// rejected.
+func validateAdvertiseBase(config *Configuration) error {
+	base := strings.TrimRight(strings.TrimSpace(config.ContinuityAdvertiseBase), "/")
+	config.ContinuityAdvertiseBase = base
+	if base == "" {
+		return nil
+	}
+	parsed, err := url.Parse(base)
+	if err != nil {
+		return fmt.Errorf("continuity_advertise_base %q is not a valid URL: %v", base, err)
+	}
+	if parsed.Scheme != "http" && parsed.Scheme != "https" {
+		return fmt.Errorf("continuity_advertise_base %q must start with http:// or https://", base)
+	}
+	if parsed.Hostname() == "" {
+		return fmt.Errorf("continuity_advertise_base %q does not contain a host", base)
+	}
+	if parsed.Port() != "" {
+		return fmt.Errorf("continuity_advertise_base %q must not contain a port: the published container port is appended by the server", base)
+	}
+	if parsed.Path != "" {
+		return fmt.Errorf("continuity_advertise_base %q must not contain a path", base)
 	}
 	return nil
+}
+
+// validateContinuityFile inspects the native Continuity configuration file
+// whose contents are forwarded to the server, checking the mistakes Continuity
+// itself cannot recover from and that would otherwise only surface on the
+// server: a 'host' without scheme (continuity builds its endpoint by plain
+// concatenation), a pool that cannot be resolved, and — in Path B only — an
+// 'auth_key' that is not an absolute path (continuity does no `~` expansion
+// and resolves it on the server's filesystem).
+func validateContinuityFile(config *Configuration) error {
+	data, err := os.ReadFile(config.ContinuityConfig)
+	if err != nil {
+		return fmt.Errorf("cannot read continuity_config file %q: %v", config.ContinuityConfig, err)
+	}
+	var file continuityFileConfig
+	if err := yaml.Unmarshal(data, &file); err != nil {
+		return fmt.Errorf("cannot parse continuity_config file %q: %v", config.ContinuityConfig, err)
+	}
+
+	host := strings.TrimSpace(file.Host)
+	if host == "" {
+		return fmt.Errorf("continuity_config %q does not set 'host'", config.ContinuityConfig)
+	}
+	if !strings.HasPrefix(host, "http://") && !strings.HasPrefix(host, "https://") {
+		return fmt.Errorf("'host' %q in continuity_config %q must include the scheme (e.g. http://%s): continuity builds its endpoint by concatenation", host, config.ContinuityConfig, host)
+	}
+
+	if strings.TrimSpace(config.ContinuityPool) == "" && strings.TrimSpace(file.DefaultPool) == "" {
+		return fmt.Errorf("continuity_pool is not set and continuity_config %q has no 'default_pool': continuity would reject every command", config.ContinuityConfig)
+	}
+
+	// Path A: the server rewrites auth_key to point at the key it stores, so
+	// whatever the file currently holds is irrelevant.
+	if strings.TrimSpace(config.ContinuityPrivateKey) != "" {
+		return nil
+	}
+	authKey := strings.TrimSpace(file.AuthKey)
+	if authKey == "" {
+		return fmt.Errorf("continuity_private_key is not set and continuity_config %q has no 'auth_key': no key would be available to authenticate against continuity", config.ContinuityConfig)
+	}
+	if strings.HasPrefix(authKey, "~") {
+		return fmt.Errorf("'auth_key' %q in continuity_config %q must be an absolute path: continuity does not expand '~'", authKey, config.ContinuityConfig)
+	}
+	if !isServerAbsPath(authKey) {
+		return fmt.Errorf("'auth_key' %q in continuity_config %q must be an absolute path on the deployer server", authKey, config.ContinuityConfig)
+	}
+	return nil
+}
+
+// isServerAbsPath reports whether path is absolute from the point of view of
+// the deployer *server*, which is normally Linux even when the client runs on
+// Windows: filepath.IsAbs alone would reject "/opt/deployer/key" on a Windows
+// client.
+func isServerAbsPath(path string) bool {
+	return strings.HasPrefix(path, "/") || filepath.IsAbs(path)
 }
 
 // checkReadableFile verifies that path exists, is not a directory, and can
@@ -284,8 +396,15 @@ image_name: myapp:latest
 #ekvs_private_key: '~/.ssh/ekvs_key'
 ##Continuity integration (optional): register the deployed container as a
 ##backend on a Continuity load balancer pool. When continuity_enable is
-##true, continuity_config is required: it must point to a Continuity CLI
-##configuration file (host/port/default_pool/auth_key).
+##true, continuity_config and continuity_internal_port are required.
+##continuity_config must point to a Continuity CLI configuration file
+##(host/port/default_pool/auth_key). Note that continuity itself does not
+##expand '~' and builds its endpoint by concatenation, so inside that file
+##'host' must include the scheme (e.g. http://continuity.example.com) and
+##'auth_key' must be an absolute path; the key must have no passphrase.
+##continuity_internal_port is the port the container listens on: the server
+##looks up the published Docker port for it.
+##continuity_pool may be omitted if that file sets default_pool.
 ##continuity_private_key is optional and has NO fallback (unlike
 ##ekvs_private_key):
 ## - if set, the key is read here and sent to the server, which will copy
@@ -293,6 +412,10 @@ image_name: myapp:latest
 ##   forwarded continuity_config to point at it;
 ## - if left empty, auth_key in continuity_config is assumed to already
 ##   point to a key present on the server, placed there manually.
+##continuity_advertise_base overrides, for this project only, the server's
+##own continuity_advertise_base: the base URL under which the container is
+##reachable by continuity. Scheme included, no port and no path — the
+##published container port is appended by the server.
 #continuity_enable: false
 #continuity_config: './continuity-client.yaml'
 #continuity_private_key: '~/.ssh/continuity_key'
@@ -300,6 +423,7 @@ image_name: myapp:latest
 #continuity_health_check_path: '/health'
 #continuity_internal_port: '8080'
 #continuity_remove_previous: true
+#continuity_advertise_base: 'http://10.0.0.5'
 `))
 	return err
 }

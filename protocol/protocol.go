@@ -84,6 +84,9 @@ type Request struct {
 	// CLI configuration file (host/port/default_pool/auth_key). When
 	// ContinuityPrivateKey is empty, auth_key is expected to already
 	// point to a key present on the server (placed there manually).
+	// ContinuityAdvertiseBase is the optional base URL (scheme included,
+	// no port) under which the container must be reachable by Continuity.
+	// When empty the server falls back to its own configuration.
 	ContinuityEnable          bool
 	ContinuityConfig          []byte
 	ContinuityPrivateKey      []byte
@@ -91,6 +94,7 @@ type Request struct {
 	ContinuityHealthCheckPath string
 	ContinuityInternalPort    string
 	ContinuityRemovePrevious  bool
+	ContinuityAdvertiseBase   string
 }
 
 func (r Request) String() string {

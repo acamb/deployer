@@ -20,6 +20,13 @@ type ServerConfiguration struct {
 	// register deployed containers on a Continuity load balancer pool.
 	// When empty the server resolves `continuity` from PATH.
 	ContinuityBin string `yaml:"continuity_bin"`
+	// optional base URL, scheme included and without port (e.g.
+	// `http://10.0.0.5`), under which containers deployed on this server
+	// are reachable by Continuity. The published Docker port is appended
+	// to it to build the backend address. A client may override it per
+	// project; when both are empty the server falls back to
+	// `http://` + os.Hostname().
+	ContinuityAdvertiseBase string `yaml:"continuity_advertise_base"`
 }
 
 func ReadServerConfiguration(filePath string) (*ServerConfiguration, error) {

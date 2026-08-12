@@ -31,6 +31,17 @@ var decoder *gob.Decoder
 
 var currentConfig config.Configuration
 
+// responseError turns a non-Ok response into an error, giving NotReady a
+// dedicated message: the server rejects every request until it has completed
+// the initial reconciliation of the projects registered on Continuity, and the
+// generic Message would not tell the user that retrying is all it takes.
+func responseError(response protocol.Response) error {
+	if response.Status == protocol.NotReady {
+		return errors.New("the deployer server is completing its initialization (continuity reconciliation), please retry in a few seconds")
+	}
+	return errors.New(response.Message)
+}
+
 func Connect(configuration config.Configuration) error {
 	currentConfig = configuration
 	privateKey, err := loadPrivateKey(configuration)
@@ -122,9 +133,15 @@ func Logs(name string, revision int32) (<-chan string, error) {
 				}
 				return
 			}
-			if response.Status == protocol.Ok || response.Status == protocol.Ko {
+			switch response.Status {
+			case protocol.Ok, protocol.Ko:
 				logChan <- response.Message
-			} else {
+			case protocol.NotReady:
+				// Terminal, not a log line: report why the stream never
+				// started instead of closing the channel silently.
+				logChan <- responseError(response).Error()
+				return
+			default:
 				return
 			}
 		}
@@ -147,7 +164,7 @@ func Revisions(name string) ([]string, error) {
 		return nil, err
 	}
 	if response.Status != protocol.Ok {
-		return nil, errors.New(response.Message)
+		return nil, responseError(response)
 	}
 	revisions := protocol.RevisionsDetails{}
 	err := json.Unmarshal([]byte(response.Message), &revisions)
@@ -177,7 +194,7 @@ func Ports(name string, revision *int32, port *int32) ([]protocol.Port, error) {
 		return nil, err
 	}
 	if response.Status != protocol.Ok {
-		return nil, errors.New(response.Message)
+		return nil, responseError(response)
 	}
 	ports := protocol.PortsResponse{}
 	err := json.Unmarshal([]byte(response.Message), &ports)
@@ -231,6 +248,32 @@ func handleRequest(name string,
 		request.EkvsPrivateKey = keyBytes
 	}
 
+	// Populate Continuity fields for commands that will start a container.
+	if currentConfig.ContinuityEnable &&
+		(req == protocol.Deploy || req == protocol.Start || req == protocol.Restart) {
+		configBytes, cfgErr := os.ReadFile(currentConfig.ContinuityConfig)
+		if cfgErr != nil {
+			return fmt.Errorf("cannot read continuity_config %q: %v", currentConfig.ContinuityConfig, cfgErr)
+		}
+		request.ContinuityEnable = true
+		request.ContinuityConfig = configBytes
+		request.ContinuityPool = currentConfig.ContinuityPool
+		request.ContinuityHealthCheckPath = currentConfig.ContinuityHealthCheckPath
+		request.ContinuityInternalPort = currentConfig.ContinuityInternalPort
+		request.ContinuityRemovePrevious = currentConfig.ContinuityRemovePrevious
+		request.ContinuityAdvertiseBase = currentConfig.ContinuityAdvertiseBase
+		// ContinuityPrivateKey is only sent when explicitly configured
+		// (Path A). When empty, Request.ContinuityPrivateKey stays nil,
+		// telling the server the key already exists there (Path B).
+		if currentConfig.ContinuityPrivateKey != "" {
+			keyBytes, keyErr := os.ReadFile(currentConfig.ContinuityPrivateKey)
+			if keyErr != nil {
+				return fmt.Errorf("cannot read continuity_private_key %q: %v", currentConfig.ContinuityPrivateKey, keyErr)
+			}
+			request.ContinuityPrivateKey = keyBytes
+		}
+	}
+
 	if composeFile != nil {
 		composeData, err := os.ReadFile(composeFile.Name())
 		if err != nil {
@@ -245,7 +288,7 @@ func handleRequest(name string,
 		return err
 	}
 	if response.Status != protocol.Ok {
-		return errors.New(response.Message)
+		return responseError(response)
 	}
 	return nil
 }
@@ -269,7 +312,7 @@ func sendTar(request protocol.Request, tarFile *os.File) error {
 			return err
 		}
 		if response.Status != protocol.Ok {
-			return errors.New(response.Message)
+			return responseError(response)
 		}
 		if _, err := tarFile.Seek(0, 0); err != nil {
 			return fmt.Errorf("error seeking tar file: %v", err)
