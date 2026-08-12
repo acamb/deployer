@@ -16,6 +16,10 @@ type ServerConfiguration struct {
 	// inject secrets when a client requests it. When empty the server
 	// resolves `ekvs` from PATH.
 	EkvsBin string `yaml:"ekvs_bin"`
+	// optional absolute path to the `continuity` CLI binary used to
+	// register deployed containers on a Continuity load balancer pool.
+	// When empty the server resolves `continuity` from PATH.
+	ContinuityBin string `yaml:"continuity_bin"`
 }
 
 func ReadServerConfiguration(filePath string) (*ServerConfiguration, error) {

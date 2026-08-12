@@ -461,6 +461,69 @@ services:
 - Errors reported by `ekvs` (including EKVS server URLs) are forwarded to
   the client verbatim.
 
+## Continuity Integration
+
+Deployer can optionally integrate with [Continuity](https://github.com/acamb/continuity),
+a lightweight load balancer, to automatically register the container it just
+deployed as a backend on a Continuity pool, optionally removing the previous
+backend. The server drives this integration by invoking the `continuity` CLI
+as an external process (same approach used for the EKVS integration).
+
+### Prerequisites
+- A Continuity server reachable from the deployer server.
+- A pool already created on Continuity for the project.
+- The `continuity` CLI installed on the deployer **server**. By default it
+  is looked up in `PATH`; you can override it via `continuity_bin` in the
+  server configuration.
+
+### Server configuration (optional)
+```yaml
+# /opt/deployer/config.yaml
+# ...
+continuity_bin: /usr/local/bin/continuity   # optional; defaults to `continuity` from PATH
+```
+
+### Client configuration
+```yaml
+# client-config.yaml
+host: your-server-host
+port: 7676
+name: myapp
+image_name: myapp:latest
+
+continuity_enable: true
+continuity_config: './continuity-client.yaml'
+continuity_pool: 'myapp.example.com'
+continuity_health_check_path: '/health'
+continuity_internal_port: '8080'
+continuity_remove_previous: true
+# continuity_private_key: '~/.ssh/continuity_key'   # optional, see below
+```
+
+`continuity_config` points to a Continuity CLI configuration file
+(`host`/`port`/`default_pool`/`auth_key`) whose contents are forwarded to the
+deployer server on every `deploy`, `start` and `restart` command.
+
+The private key used to authenticate against Continuity is handled through
+two mutually exclusive paths:
+- **Managed by deployer**: set `continuity_private_key` to a key file path.
+  The client reads and sends its contents to the server, which stores a
+  copy in the project's working directory and rewrites `auth_key` in the
+  forwarded `continuity_config` to point at it.
+- **Already present on the server**: leave `continuity_private_key` unset.
+  No key is sent; the server persists `continuity_config` unmodified,
+  assuming its `auth_key` already points to a key placed manually on the
+  server.
+
+### Security notes
+- When `continuity_private_key` is set, the key is transmitted over the
+  already-encrypted SSH channel between client and server on every
+  container-starting operation, same as the EKVS integration. Keep the key
+  file with `600` permissions on the client.
+- Unlike the EKVS integration, the Continuity key (when managed by
+  deployer) is persisted on the server rather than used ephemerally,
+  because it is also needed by the periodic reconciliation check.
+
 ## Troubleshooting
 
 ### Authentication Errors

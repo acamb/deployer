@@ -46,6 +46,18 @@ type Configuration struct {
 	EkvsServer     string `yaml:"ekvs_server"`
 	EkvsProject    string `yaml:"ekvs_project"`
 	EkvsPrivateKey string `yaml:"ekvs_private_key"`
+
+	// ContinuityPrivateKey is fully optional and has no fallback (unlike
+	// EkvsPrivateKey): when left empty, it means the auth_key referenced
+	// inside ContinuityConfig already points to a key present on the
+	// server, placed there manually by an administrator.
+	ContinuityEnable          bool   `yaml:"continuity_enable"`
+	ContinuityConfig          string `yaml:"continuity_config"`
+	ContinuityPrivateKey      string `yaml:"continuity_private_key"`
+	ContinuityPool            string `yaml:"continuity_pool"`
+	ContinuityHealthCheckPath string `yaml:"continuity_health_check_path"`
+	ContinuityInternalPort    string `yaml:"continuity_internal_port"`
+	ContinuityRemovePrevious  bool   `yaml:"continuity_remove_previous"`
 }
 
 func ReadConfiguration(filePath string) (*Configuration, error) {
@@ -79,6 +91,20 @@ func ReadConfiguration(filePath string) (*Configuration, error) {
 		}
 		config.EkvsPrivateKey = expanded
 	}
+	if config.ContinuityConfig != "" {
+		expanded, err := expandHome(config.ContinuityConfig)
+		if err != nil {
+			return nil, fmt.Errorf("cannot expand continuity_config path %q: %v", config.ContinuityConfig, err)
+		}
+		config.ContinuityConfig = expanded
+	}
+	if config.ContinuityPrivateKey != "" {
+		expanded, err := expandHome(config.ContinuityPrivateKey)
+		if err != nil {
+			return nil, fmt.Errorf("cannot expand continuity_private_key path %q: %v", config.ContinuityPrivateKey, err)
+		}
+		config.ContinuityPrivateKey = expanded
+	}
 
 	if config.ImageName == "" {
 		config.ImageName = config.Name
@@ -91,6 +117,10 @@ func ReadConfiguration(filePath string) (*Configuration, error) {
 	}
 
 	if err := validateEkvs(config); err != nil {
+		return nil, err
+	}
+
+	if err := validateContinuity(config); err != nil {
 		return nil, err
 	}
 
@@ -131,6 +161,49 @@ func validateEkvs(config *Configuration) error {
 	f, err := os.Open(config.EkvsPrivateKey)
 	if err != nil {
 		return fmt.Errorf("cannot read ekvs_private_key file %q: %v", config.EkvsPrivateKey, err)
+	}
+	_ = f.Close()
+	return nil
+}
+
+// validateContinuity validates the Continuity integration fields. Unlike
+// validateEkvs, ContinuityPrivateKey has no fallback: an empty value is a
+// deliberate choice meaning the auth_key referenced inside ContinuityConfig
+// already points to a key present on the server (Path B), so no local file
+// is required or checked here in that case.
+func validateContinuity(config *Configuration) error {
+	if !config.ContinuityEnable {
+		return nil
+	}
+	if strings.TrimSpace(config.ContinuityConfig) == "" {
+		return fmt.Errorf("continuity_enable is true but continuity_config is not set")
+	}
+	if err := checkReadableFile(config.ContinuityConfig, "continuity_config"); err != nil {
+		return err
+	}
+
+	if strings.TrimSpace(config.ContinuityPrivateKey) == "" {
+		return nil
+	}
+	if err := checkReadableFile(config.ContinuityPrivateKey, "continuity_private_key"); err != nil {
+		return err
+	}
+	return nil
+}
+
+// checkReadableFile verifies that path exists, is not a directory, and can
+// be opened for reading. fieldName is used to produce a descriptive error.
+func checkReadableFile(path string, fieldName string) error {
+	info, err := os.Stat(path)
+	if err != nil {
+		return fmt.Errorf("cannot access %s file %q: %v", fieldName, path, err)
+	}
+	if info.IsDir() {
+		return fmt.Errorf("%s %q is a directory, expected a file", fieldName, path)
+	}
+	f, err := os.Open(path)
+	if err != nil {
+		return fmt.Errorf("cannot read %s file %q: %v", fieldName, path, err)
 	}
 	_ = f.Close()
 	return nil
@@ -209,6 +282,24 @@ image_name: myapp:latest
 #ekvs_server: 'https://ekvs.example.com'
 #ekvs_project: 'my-project'
 #ekvs_private_key: '~/.ssh/ekvs_key'
+##Continuity integration (optional): register the deployed container as a
+##backend on a Continuity load balancer pool. When continuity_enable is
+##true, continuity_config is required: it must point to a Continuity CLI
+##configuration file (host/port/default_pool/auth_key).
+##continuity_private_key is optional and has NO fallback (unlike
+##ekvs_private_key):
+## - if set, the key is read here and sent to the server, which will copy
+##   it into the project's working directory and rewrite auth_key in the
+##   forwarded continuity_config to point at it;
+## - if left empty, auth_key in continuity_config is assumed to already
+##   point to a key present on the server, placed there manually.
+#continuity_enable: false
+#continuity_config: './continuity-client.yaml'
+#continuity_private_key: '~/.ssh/continuity_key'
+#continuity_pool: 'my-app.example.com'
+#continuity_health_check_path: '/health'
+#continuity_internal_port: '8080'
+#continuity_remove_previous: true
 `))
 	return err
 }

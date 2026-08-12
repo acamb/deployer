@@ -41,6 +41,7 @@ type Status int
 const (
 	Ok Status = iota
 	Ko
+	NotReady
 )
 
 func (s Status) String() string {
@@ -49,6 +50,8 @@ func (s Status) String() string {
 		return "Ok"
 	case Ko:
 		return "Ko"
+	case NotReady:
+		return "NotReady"
 	default:
 		return "Unknown Status"
 	}
@@ -72,6 +75,22 @@ type Request struct {
 	EkvsServer     string
 	EkvsProject    string
 	EkvsPrivateKey []byte
+	// Continuity integration: these fields are optional and are populated
+	// only when the client has Continuity enabled (see client/config).
+	// They accompany requests that start a container (Deploy, Start,
+	// Restart) so the server can register/update the corresponding
+	// backend on a Continuity load balancer pool.
+	// ContinuityConfig carries the raw bytes of the client's Continuity
+	// CLI configuration file (host/port/default_pool/auth_key). When
+	// ContinuityPrivateKey is empty, auth_key is expected to already
+	// point to a key present on the server (placed there manually).
+	ContinuityEnable          bool
+	ContinuityConfig          []byte
+	ContinuityPrivateKey      []byte
+	ContinuityPool            string
+	ContinuityHealthCheckPath string
+	ContinuityInternalPort    string
+	ContinuityRemovePrevious  bool
 }
 
 func (r Request) String() string {
