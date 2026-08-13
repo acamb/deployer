@@ -58,6 +58,15 @@ func main() {
 		log.Fatalf("Error creating directory %s: %v", config.WorkingDirectory, err)
 	}
 
+	// The registry of the projects to keep published on Continuity is rebuilt
+	// from the working directory: the per project .continuity directory is the
+	// only source of truth, there is no database.
+	loadContinuityRegistry(config.WorkingDirectory)
+	// The flag will be raised by the periodic reconciliation, once it has gone
+	// through the whole registry. Until that goroutine exists, the server is
+	// ready as soon as the registry has been loaded.
+	ready.Store(true)
+
 	hostKey, err := loadHostKey(config)
 	if err != nil {
 		log.Fatalf("Error loading host key: %v", err)
@@ -134,9 +143,20 @@ func handleRequest(dataChannel ssh.Channel) {
 		return
 	}
 
+	// Requests are refused until the server knows the state of the backends it
+	// published on Continuity: acting before that could undo the work of the
+	// initial reconciliation. The client turns NotReady into an invitation to
+	// retry, so nothing is lost.
+	if !ready.Load() {
+		log.Printf("Request %v for %s refused: the server is still initializing", request.Command, request.Name)
+		_ = handleResponse("The server is completing its initialization", protocol.NotReady, encoder)
+		return
+	}
+
 	if request.Version != version.Version {
 		log.Printf("Protocol version mismatch: client %s, server %s. Connection will be closed", request.Version, version.Version)
 		_ = handleResponse("Protocol version mismatch: client: "+request.Version+", server: "+version.Version, protocol.Ko, encoder)
+		return
 	}
 
 	if request.Command == protocol.Stop {

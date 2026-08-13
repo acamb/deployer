@@ -223,6 +223,12 @@ func setupTestEnvironment(t *testing.T) {
 
 	err := os.MkdirAll(config.WorkingDirectory, 0770)
 	require.NoError(t, err)
+
+	// A freshly started server is not ready and refuses every request: the
+	// tests exercise the behaviour of an initialized one, unless they say
+	// otherwise.
+	ready.Store(true)
+	continuityProjects.replace(nil)
 }
 
 // Global variables for test key cleanup
@@ -958,6 +964,11 @@ func TestProtocolVersionMatch(t *testing.T) {
 
 		assert.Equal(t, protocol.Ko, response.Status)
 		assert.Contains(t, response.Message, "Protocol version mismatch")
+
+		// A mismatch closes the conversation: the command must not be executed
+		// anyway, which would send a second response after the refusal.
+		err = decoder.Decode(&protocol.Response{})
+		assert.Error(t, err, "the command must not run after a version mismatch")
 	})
 }
 

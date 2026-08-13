@@ -71,6 +71,10 @@ func registerBackendOn(client continuityClient, request protocol.Request) error 
 	if err != nil {
 		return err
 	}
+	// From now on the project is one the reconciliation has to look after, even
+	// if the publication below fails: its state is on disk and the next startup
+	// scan would pick it up anyway.
+	continuityProjects.add(request.Name)
 	address, err := backendAddress(state, containerName(request.Name, request.Revision))
 	if err != nil {
 		return err
