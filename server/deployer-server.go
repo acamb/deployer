@@ -140,13 +140,18 @@ func handleRequest(dataChannel ssh.Channel) {
 	}
 
 	if request.Command == protocol.Stop {
+		// The backend is removed before stopping the container: a stop with
+		// DeleteFiles wipes the working directory, the continuity state
+		// included. A continuity problem is only a warning, the stop must
+		// happen anyway.
+		continuityWarn := deregisterBackend(request.Name)
 		err := stopContainer(request)
 		if err != nil {
 			_ = handleResponse("Error stopping container: "+err.Error(), protocol.Ko, encoder)
 			log.Printf("Error stopping container %s: %v", request.Name, err)
 			return
 		} else {
-			_ = handleResponse("Container stopped successfully", protocol.Ok, encoder)
+			_ = handleResponse(continuityWarning("Container stopped successfully", continuityWarn), protocol.Ok, encoder)
 			return
 		}
 	} else if request.Command == protocol.Start {
@@ -156,7 +161,7 @@ func handleRequest(dataChannel ssh.Channel) {
 			log.Printf("Error starting container %s: %v", request.Name, err)
 			return
 		} else {
-			_ = handleResponse(fmt.Sprintf("Container started successfully"), protocol.Ok, encoder)
+			_ = handleResponse(continuityWarning("Container started successfully", registerBackend(request)), protocol.Ok, encoder)
 			return
 		}
 	} else if request.Command == protocol.Deploy {
@@ -183,6 +188,7 @@ func handleRequest(dataChannel ssh.Channel) {
 			log.Printf("Error starting container %s: %v", request.Name, err)
 			return
 		}
+		continuityWarn := registerBackend(request)
 		if request.Prune {
 			cmd := exec.Command("docker", "image", "prune", "-f", "-a")
 			output, err := cmd.CombinedOutput()
@@ -190,7 +196,7 @@ func handleRequest(dataChannel ssh.Channel) {
 				log.Printf("Error pruning images: %v. Output: %s", err, string(output))
 			}
 		}
-		_ = handleResponse(fmt.Sprintf("Container started successfully"), protocol.Ok, encoder)
+		_ = handleResponse(continuityWarning("Container started successfully", continuityWarn), protocol.Ok, encoder)
 	} else if request.Command == protocol.Restart {
 		if err := stopContainer(request); err != nil {
 			_ = handleResponse(fmt.Sprintf("Error stopping container: %v", err), protocol.Ko, encoder)
@@ -202,7 +208,9 @@ func handleRequest(dataChannel ssh.Channel) {
 			log.Printf("Error starting container %s: %v", request.Name, err)
 			return
 		}
-		_ = handleResponse(fmt.Sprintf("Container started successfully"), protocol.Ok, encoder)
+		// A restart republishes the backend too: the ephemeral port Docker
+		// assigns to the container changes at every restart.
+		_ = handleResponse(continuityWarning("Container started successfully", registerBackend(request)), protocol.Ok, encoder)
 
 	} else if request.Command == protocol.Logs {
 		if request.Command == protocol.Logs {
