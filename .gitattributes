@@ -1,0 +1,11 @@
+# Normalize all text files to LF in the repository and in the working tree.
+# Without eol=lf, core.autocrlf=true checks out CRLF on Windows and gofmt -l
+# then flags every checked-out .go file.
+* text=auto eol=lf
+
+# Binary assets: never touch.
+*.png binary
+*.jpg binary
+*.gz binary
+*.tar binary
+*.zip binary
