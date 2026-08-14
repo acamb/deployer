@@ -538,16 +538,18 @@ func handleContinuityRequest(t *testing.T, request protocol.Request) protocol.Re
 	return response
 }
 
-func TestStartStaysOkWhenContinuityFails(t *testing.T) {
+func TestStartFailsWhenContinuityFails(t *testing.T) {
 	setupTestEnvironment(t)
-	// A misconfigured continuity_bin: the container is up, the deploy
-	// succeeded, so the problem can only be a warning, never a Ko.
+	// A misconfigured continuity_bin makes the publication fail. Adding the
+	// container to the load balancer is part of a successful deploy, so the
+	// response is a Ko; there is no previous revision to fall back to, so the
+	// container is left running for the reconciliation to retry.
 	config.ContinuityBin = filepath.Join(t.TempDir(), "there-is-no-continuity-here")
 	previousPorts := continuityPortsBinding
 	continuityPortsBinding = publishedPorts().binding
 	t.Cleanup(func() { continuityPortsBinding = previousPorts })
 
-	request := continuityRequest("warning-app")
+	request := continuityRequest("failing-app")
 	request.Command = protocol.Start
 	require.NoError(t, os.MkdirAll(filepath.Join(config.WorkingDirectory, request.Name), 0770))
 
@@ -555,9 +557,180 @@ func TestStartStaysOkWhenContinuityFails(t *testing.T) {
 	response := handleContinuityRequest(t, request)
 	TestingMode = false
 
-	assert.Equal(t, protocol.Ok, response.Status)
-	assert.Contains(t, response.Message, "started successfully")
-	assert.Contains(t, response.Message, "continuity warning")
+	assert.Equal(t, protocol.Ko, response.Status)
+	assert.Contains(t, response.Message, "Load balancer registration failed")
+	assert.Contains(t, response.Message, "will be retried")
+}
+
+// perContainerPorts is a name-aware `docker port`: it lets a test say that one
+// container publishes a port while another one is down.
+type perContainerPorts struct {
+	byName map[string][]protocol.Port
+	calls  []string
+}
+
+func (p *perContainerPorts) binding(name string, _ string) ([]protocol.Port, error) {
+	p.calls = append(p.calls, name)
+	return p.byName[name], nil
+}
+
+// installTeardown replaces the container teardown with a recorder, so a rollback
+// can be exercised without Docker.
+func installTeardown(t *testing.T) *[]protocol.Request {
+	t.Helper()
+	var tornDown []protocol.Request
+	previous := teardownContainer
+	teardownContainer = func(request protocol.Request) error {
+		tornDown = append(tornDown, request)
+		return nil
+	}
+	t.Cleanup(func() { teardownContainer = previous })
+	return &tornDown
+}
+
+func TestFinalizeBackendSucceeds(t *testing.T) {
+	setupTestEnvironment(t)
+	client := &fakeContinuityClient{}
+	useFakeContinuity(t, client, publishedPorts())
+	tornDown := installTeardown(t)
+
+	result := finalizeBackend(continuityRequest("myapp"))
+
+	assert.NoError(t, result.err)
+	assert.False(t, result.rolledBack)
+	assert.Empty(t, *tornDown)
+}
+
+func TestFinalizeBackendRollsBackToThePreviousRevision(t *testing.T) {
+	setupTestEnvironment(t)
+	// The previous revision is published, so a transaction is used to replace
+	// it, and the transaction rolls back (the new backend never gets healthy).
+	client := &fakeContinuityClient{
+		pool: &continuity.Pool{UnconditionalServers: []continuity.ServerHost{
+			continuityBackend("cbfca8b3", "http://10.0.0.5:32000"),
+		}},
+		transactionErr: errors.New("the continuity transaction was rolled back: new server is not healthy"),
+	}
+	useFakeContinuity(t, client, publishedPorts())
+	tornDown := installTeardown(t)
+
+	dir := continuity.Dir(config.WorkingDirectory, "myapp")
+	require.NoError(t, continuity.SaveState(dir, &continuity.State{
+		Project:        "myapp",
+		Container:      "myapp-1",
+		Pool:           "my-app.example.com",
+		InternalPort:   "80",
+		RemovePrevious: true,
+		AdvertiseBase:  "http://10.0.0.5",
+		LastAddress:    "http://10.0.0.5:32000",
+	}))
+
+	request := continuityRequest("myapp")
+	request.Revision = "2"
+	result := finalizeBackend(request)
+
+	require.Error(t, result.err)
+	assert.True(t, result.rolledBack)
+	assert.Equal(t, "myapp-1", result.keptRevision)
+	// The new revision container was terminated exactly once.
+	require.Len(t, *tornDown, 1)
+	assert.Equal(t, "2", (*tornDown)[0].Revision)
+
+	// The state was restored to the previous revision: the reconciliation must
+	// keep myapp-1 published and never see the new, dead, container.
+	state, err := continuity.LoadState(dir)
+	require.NoError(t, err)
+	assert.Equal(t, "myapp-1", state.Container)
+	assert.Equal(t, "http://10.0.0.5:32000", state.LastAddress)
+}
+
+func TestFinalizeBackendLeavesTheContainerRunningWithoutAPreviousRevision(t *testing.T) {
+	setupTestEnvironment(t)
+	// First deploy: nothing published yet, an add is used and it fails. There is
+	// no previous revision to keep, so the container is left running.
+	client := &fakeContinuityClient{addErr: errors.New("exit status 1")}
+	useFakeContinuity(t, client, publishedPorts())
+	tornDown := installTeardown(t)
+
+	result := finalizeBackend(continuityRequest("myapp"))
+
+	require.Error(t, result.err)
+	assert.False(t, result.rolledBack)
+	assert.Empty(t, *tornDown)
+}
+
+func TestFinalizeBackendDoesNotRollBackTheSameRevision(t *testing.T) {
+	setupTestEnvironment(t)
+	client := &fakeContinuityClient{
+		pool: &continuity.Pool{UnconditionalServers: []continuity.ServerHost{
+			continuityBackend("cbfca8b3", "http://10.0.0.5:32000"),
+		}},
+		transactionErr: errors.New("rolled back"),
+	}
+	useFakeContinuity(t, client, publishedPorts())
+	tornDown := installTeardown(t)
+
+	dir := continuity.Dir(config.WorkingDirectory, "myapp")
+	require.NoError(t, continuity.SaveState(dir, &continuity.State{
+		Project:        "myapp",
+		Container:      "myapp-2",
+		Pool:           "my-app.example.com",
+		InternalPort:   "80",
+		RemovePrevious: true,
+		LastAddress:    "http://10.0.0.5:32000",
+	}))
+
+	// Redeploying the same revision replaces it in place: the old container was
+	// already stopped by the deploy, there is no distinct previous revision that
+	// could keep serving, so no rollback.
+	request := continuityRequest("myapp")
+	request.Revision = "2"
+	result := finalizeBackend(request)
+
+	require.Error(t, result.err)
+	assert.False(t, result.rolledBack)
+	assert.Empty(t, *tornDown)
+}
+
+func TestReconcileKeepsThePreviousRevisionAfterARollback(t *testing.T) {
+	setupTestEnvironment(t)
+	// The state as finalizeBackend restored it after a rollback: the previous
+	// revision, myapp-1, is the active one, published at 32000.
+	dir := continuity.Dir(config.WorkingDirectory, "myapp")
+	_, err := continuity.WriteProjectConfig(dir, []byte("host: http://continuity.example.com\n"), nil)
+	require.NoError(t, err)
+	require.NoError(t, continuity.SaveState(dir, &continuity.State{
+		Project:       "myapp",
+		Container:     "myapp-1",
+		Pool:          "my-app.example.com",
+		InternalPort:  "80",
+		AdvertiseBase: "http://10.0.0.5",
+		LastAddress:   "http://10.0.0.5:32000",
+	}))
+
+	// The previous revision still publishes its port; the rolled back one is gone.
+	ports := &perContainerPorts{byName: map[string][]protocol.Port{
+		"myapp-1": {{LocalPort: "80", BindPort: "32000", Protocol: "tcp", Address: "0.0.0.0"}},
+	}}
+	client := &fakeContinuityClient{pool: &continuity.Pool{UnconditionalServers: []continuity.ServerHost{
+		continuityBackend("cbfca8b3", "http://10.0.0.5:32000"),
+	}}}
+	previousClient, previousPorts := newContinuityClient, continuityPortsBinding
+	newContinuityClient = func() continuityClient { return client }
+	continuityPortsBinding = ports.binding
+	t.Cleanup(func() { newContinuityClient, continuityPortsBinding = previousClient, previousPorts })
+
+	require.NoError(t, reconcileProject(client, "myapp"))
+
+	// The previous backend is healthy at its expected address: nothing to repair,
+	// and above all nothing removed.
+	assert.Empty(t, client.removals)
+	assert.Empty(t, client.transactions)
+	assert.Empty(t, client.adds)
+	assert.Equal(t, []string{"myapp-1"}, ports.calls)
+	state, err := continuity.LoadState(dir)
+	require.NoError(t, err)
+	assert.Equal(t, "http://10.0.0.5:32000", state.LastAddress)
 }
 
 func TestRestartRepublishesTheBackend(t *testing.T) {

@@ -34,3 +34,8 @@
             continuity_health_check_path, continuity_internal_port, continuity_remove_previous,
             continuity_advertise_base, continuity_private_key.
      - New 'lb-status' command to show the Continuity pool a project is published on.
+     - Adding the container to the load balancer is now part of a successful deploy: if the
+            registration fails (continuity CLI error, transaction rollback, ...) the deploy is
+            reported as failed. When deploying a new revision, the new container is torn down and
+            the previous revision is kept active; otherwise the container is left running and the
+            periodic reconciliation retries the registration.

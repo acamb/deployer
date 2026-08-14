@@ -5,6 +5,7 @@ import (
 	"deployer/protocol"
 	"deployer/server/continuity"
 	"errors"
+	"fmt"
 	"log"
 	"os"
 	"path/filepath"
@@ -38,9 +39,9 @@ var continuityPortsBinding = getPortsBinding
 // Continuity pool of the project, replacing the previously published one.
 //
 // It is a no-op for the requests that do not carry the Continuity fields. The
-// returned error is never fatal for the caller: at this point Docker has
-// already started the container, so the deploy succeeded and the problem is
-// reported as a warning attached to the successful response.
+// returned error tells whether the publication succeeded; deciding whether it
+// is fatal to the deploy (and whether the new revision must be rolled back) is
+// the job of finalizeBackend.
 func registerBackend(request protocol.Request) error {
 	if !request.ContinuityEnable {
 		return nil
@@ -50,6 +51,79 @@ func registerBackend(request protocol.Request) error {
 		log.Printf("Continuity: cannot publish %s: %v", request.Name, err)
 	}
 	return err
+}
+
+// teardownContainer stops the container of a request. It is a variable so that
+// the rollback of a failed publication can be exercised without Docker, like
+// newContinuityClient and continuityPortsBinding.
+var teardownContainer = stopContainer
+
+// backendResult is the outcome of finalizeBackend: how a deploy, start or
+// restart must end once the attempt to add the container to the load balancer
+// is over.
+type backendResult struct {
+	// err is nil when the container was added to the load balancer; otherwise
+	// the deploy failed and must be reported as such.
+	err error
+	// rolledBack is true when the new revision was torn down and the previous
+	// one kept live, false when the container was left running for the
+	// reconciliation to retry (no previous revision to fall back to).
+	rolledBack bool
+	// keptRevision is the container name of the revision left active after a
+	// rollback, used only to tell the user which one is still serving.
+	keptRevision string
+}
+
+// finalizeBackend publishes the container on Continuity and, when the
+// publication fails while a distinct previous revision is still serving, tears
+// the new revision down and restores the previous state, so the load balancer
+// keeps routing to the revision that is still healthy.
+//
+// Adding the container to the load balancer is part of the definition of a
+// successful deploy: unlike a bare registerBackend, a failure here is fatal.
+func finalizeBackend(request protocol.Request) backendResult {
+	if !request.ContinuityEnable {
+		return backendResult{}
+	}
+	dir := continuity.Dir(config.WorkingDirectory, request.Name)
+	// The snapshot is taken before the publication overwrites the state with the
+	// parameters of this deploy: it is what the reconciliation must see again if
+	// the new revision has to be rolled back.
+	previous, _ := continuity.LoadState(dir)
+
+	err := registerBackend(request)
+	if err == nil {
+		return backendResult{}
+	}
+
+	// A rollback is only safe when a *distinct* previous revision is still up and
+	// still published: its container is a different one, so terminating the new
+	// revision does not take the service down, and the continuity transaction is
+	// atomic, so a rolled back transaction left the previous backend healthy.
+	newContainer := containerName(request.Name, request.Revision)
+	if previous == nil || previous.LastAddress == "" || previous.ContainerName() == newContainer {
+		return backendResult{err: err}
+	}
+
+	// Restore the previous state, or the next reconciliation pass would see the
+	// new, now dead, container publish nothing and drop the previous backend.
+	if restoreErr := continuity.SaveState(dir, previous); restoreErr != nil {
+		log.Printf("Continuity: cannot restore the state of %s after a failed publication: %v", request.Name, restoreErr)
+	}
+	if teardownErr := teardownContainer(request); teardownErr != nil {
+		log.Printf("Continuity: cannot stop the rolled back revision of %s: %v", request.Name, teardownErr)
+	}
+	log.Printf("Continuity: publication of %s failed, revision %s kept active: %v", request.Name, previous.ContainerName(), err)
+	return backendResult{err: err, rolledBack: true, keptRevision: previous.ContainerName()}
+}
+
+// continuityFailureMessage is the Ko message for a deploy, start or restart
+// whose container came up but could not be added to the load balancer.
+func continuityFailureMessage(result backendResult) string {
+	if result.rolledBack {
+		return fmt.Sprintf("Load balancer registration failed: %v. Revision %s is still active, the new one was rolled back", result.err, result.keptRevision)
+	}
+	return fmt.Sprintf("Load balancer registration failed: %v. The container is running but not on the load balancer yet, it will be retried", result.err)
 }
 
 func registerBackendOn(client continuityClient, request protocol.Request) error {

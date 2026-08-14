@@ -585,6 +585,23 @@ directories — there is no central index file.
   Reconciliation only touches backends whose address is the project's current
   or previous address; unrelated backends in the same pool are left untouched.
 
+### Deploy failure and rollback
+
+When the integration is enabled, adding the container to the load balancer is
+part of a successful deploy: the client reports the deploy as done only **after**
+the backend has been registered on Continuity. If the registration fails — a
+`continuity` CLI error, or a transaction that rolls back because the new backend
+never becomes healthy — the deploy is reported as **failed** (`Ko`):
+
+- **Deploying a new revision** (the previous revision is still running under its
+  own container): the previous revision is kept active on the load balancer and
+  the new revision's container is torn down (`docker compose down`, its files are
+  kept for inspection or a retry). The Continuity transaction is atomic, so a
+  rolled-back transaction leaves the previous backend healthy and untouched.
+- **Otherwise** (revisions disabled, or redeploying the same revision, where the
+  old container has already been replaced): the container is left running and the
+  failure is reported; the periodic reconciliation retries the registration.
+
 ### Stop behavior
 
 On `deployer stop`, the server deregisters the current backend from the pool
