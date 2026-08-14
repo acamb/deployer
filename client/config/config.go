@@ -35,14 +35,15 @@ func (b *BuildMethod) UnmarshalYAML(unmarshal func(interface{}) error) error {
 }
 
 type Configuration struct {
-	Host            string      `yaml:"host"`
-	Port            int         `yaml:"port"`
-	Name            string      `yaml:"name"`
-	ImageName       string      `yaml:"image_name"`
-	PrivateKey      string      `yaml:"private_key"`
-	ComposePath     string      `yaml:"compose_file_path"`
-	BuildMethod     BuildMethod `yaml:"build_method"`
-	EnableRevisions bool        `yaml:"enable_revisions"`
+	Host                    string      `yaml:"host"`
+	Port                    int         `yaml:"port"`
+	Name                    string      `yaml:"name"`
+	ImageName               string      `yaml:"image_name"`
+	PrivateKey              string      `yaml:"private_key"`
+	ComposePath             string      `yaml:"compose_file_path"`
+	BuildMethod             BuildMethod `yaml:"build_method"`
+	EnableRevisions         bool        `yaml:"enable_revisions"`
+	RevisionsRemovePrevious bool        `yaml:"revisions_remove_previous"`
 
 	EkvsEnable     bool   `yaml:"ekvs_enable"`
 	EkvsServer     string `yaml:"ekvs_server"`
@@ -385,6 +386,10 @@ image_name: myapp:latest
 #build_method: 'docker'
 #enable_revisions will manage different revisions for the same project, useful for zero-downtime deployments and rollbacks.
 #enable_revisions: true
+#revisions_remove_previous will, on a successful --new-revision deploy, stop the revision(s)
+#that were running before. If more than one is running you are asked which to stop; if exactly
+#one, it is stopped automatically. The stopped revision's files are kept for rollback.
+#revisions_remove_previous: true
 ##EKVS integration (optional): inject secrets from an EKVS server into the
 ##container environment. When ekvs_enable is true, ekvs_server and
 ##ekvs_project are required. ekvs_private_key is optional: if omitted, the

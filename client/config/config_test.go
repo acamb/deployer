@@ -479,6 +479,32 @@ continuity_advertise_base: "https://app.example.com"
 	}
 }
 
+func TestReadConfiguration_RevisionsRemovePrevious(t *testing.T) {
+	path := writeTempConfig(t, "name: \"app\"\nenable_revisions: true\nrevisions_remove_previous: true\n")
+	defer os.Remove(path)
+
+	cfg, err := ReadConfiguration(path)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !cfg.RevisionsRemovePrevious {
+		t.Errorf("expected RevisionsRemovePrevious to be true, got %+v", cfg)
+	}
+}
+
+func TestReadConfiguration_RevisionsRemovePreviousDefaultsFalse(t *testing.T) {
+	path := writeTempConfig(t, "name: \"app\"\nenable_revisions: true\n")
+	defer os.Remove(path)
+
+	cfg, err := ReadConfiguration(path)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if cfg.RevisionsRemovePrevious {
+		t.Errorf("expected RevisionsRemovePrevious to default to false, got %+v", cfg)
+	}
+}
+
 func TestReadConfiguration_ExpandsHomeInContinuityPaths(t *testing.T) {
 	home, err := os.UserHomeDir()
 	if err != nil {

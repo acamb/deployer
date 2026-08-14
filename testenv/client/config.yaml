@@ -8,6 +8,7 @@ build_method: compose
 # deployer-server authorized_keys)
 private_key: ~/.ssh/deployer_test
 enable_revisions: true
+revisions_remove_previous: true
 #ekvs_enable: true
 #ekvs_server: http://webapp.local:9000
 #ekvs_project: test

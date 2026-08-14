@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bufio"
 	"deployer/builder"
 	"deployer/client"
 	"deployer/client/config"
@@ -8,8 +9,12 @@ import (
 	"deployer/protocol"
 	"encoding/json"
 	"fmt"
+	"io"
 	"log"
 	"os"
+	"sort"
+	"strconv"
+	"strings"
 
 	"github.com/spf13/cobra"
 )
@@ -166,6 +171,9 @@ func main() {
 				err = writeRevisionToFile(rev)
 				if err != nil {
 					log.Fatalf("Error writing revision '%d' to file: %v", rev, err)
+				}
+				if configuration.RevisionsRemovePrevious {
+					removePreviousRevisions(configuration, rev)
 				}
 			}
 		},
@@ -384,6 +392,130 @@ func readCurrentRevision() (int32, error) {
 
 func writeRevisionToFile(revision int32) error {
 	return os.WriteFile("REVISION", []byte(fmt.Sprint(revision)), 0644)
+}
+
+// parseRevisionNumber extracts the numeric revision from a running container
+// name. The server names revision containers as "<container_name>-<revision>",
+// so the revision is the token after the last '-'. Only the trailing numeric
+// token is trusted, which keeps this independent of the container_name prefix
+// (it may differ from the configured project name). Returns false when the
+// trailing token is not a number.
+func parseRevisionNumber(name string) (int32, bool) {
+	idx := strings.LastIndex(name, "-")
+	if idx < 0 || idx == len(name)-1 {
+		return 0, false
+	}
+	n, err := strconv.ParseInt(name[idx+1:], 10, 32)
+	if err != nil {
+		return 0, false
+	}
+	return int32(n), true
+}
+
+// removePreviousRevisions implements the revisions_remove_previous behaviour:
+// after a successful --new-revision deploy, stop the revision(s) that were
+// running before. It is best-effort — the deploy already succeeded, so any
+// failure here is only a warning and never aborts the command.
+func removePreviousRevisions(configuration *config.Configuration, newRev int32) {
+	Connect(configuration)
+	names, err := client.Revisions(configuration.Name)
+	if err != nil {
+		log.Printf("Warning: could not list revisions to remove previous ones: %v", err)
+		return
+	}
+
+	seen := make(map[int32]bool)
+	var candidates []int32
+	for _, name := range names {
+		n, ok := parseRevisionNumber(name)
+		if !ok || n == newRev || seen[n] {
+			continue
+		}
+		seen[n] = true
+		candidates = append(candidates, n)
+	}
+	sort.Slice(candidates, func(i, j int) bool { return candidates[i] < candidates[j] })
+
+	toStop := selectRevisionsToStop(candidates, os.Stdin)
+	for _, n := range toStop {
+		log.Printf("Stopping previous revision %d...", n)
+		Connect(configuration)
+		if err := client.StopContainer(configuration.Name, n, false); err != nil {
+			log.Printf("Warning: could not stop previous revision %d: %v", n, err)
+		}
+	}
+}
+
+// selectRevisionsToStop decides which of the candidate previous revisions to
+// stop. Zero candidates -> none; exactly one -> stop it implicitly; two or more
+// -> prompt the user when interactive, otherwise warn and skip. The reader is
+// injectable for testing.
+func selectRevisionsToStop(candidates []int32, r *os.File) []int32 {
+	switch len(candidates) {
+	case 0:
+		return nil
+	case 1:
+		return candidates
+	}
+
+	info, _ := r.Stat()
+	interactive := info != nil && (info.Mode()&os.ModeCharDevice) != 0
+	if !interactive {
+		log.Printf("Warning: multiple previous revisions are running (%v) but the terminal is not interactive; skipping removal. Stop them manually with 'stop --revision N'.", candidates)
+		return nil
+	}
+	return promptSelectRevisions(candidates, r)
+}
+
+// promptSelectRevisions asks the user which of the (2+) candidate revisions to
+// stop. Input is a list of 1-based indices separated by commas/spaces, the word
+// 'all', or empty to skip. Invalid input is re-prompted up to 3 times, then
+// treated as skip. The reader is injectable for testing.
+func promptSelectRevisions(candidates []int32, r io.Reader) []int32 {
+	reader := bufio.NewReader(r)
+	for attempt := 0; attempt < 3; attempt++ {
+		fmt.Println("Multiple previous revisions are running. Which do you want to stop?")
+		for i, n := range candidates {
+			fmt.Printf("  %d) revision %d\n", i+1, n)
+		}
+		fmt.Print("Enter numbers separated by comma/space, 'all', or leave empty to skip: ")
+
+		line, err := reader.ReadString('\n')
+		if err != nil && line == "" {
+			log.Printf("Warning: could not read selection: %v; skipping removal.", err)
+			return nil
+		}
+		line = strings.TrimSpace(line)
+		if line == "" {
+			return nil
+		}
+		if strings.EqualFold(line, "all") {
+			return candidates
+		}
+
+		fields := strings.FieldsFunc(line, func(c rune) bool { return c == ',' || c == ' ' })
+		selected := make(map[int32]bool)
+		var result []int32
+		valid := true
+		for _, f := range fields {
+			idx, err := strconv.Atoi(strings.TrimSpace(f))
+			if err != nil || idx < 1 || idx > len(candidates) {
+				valid = false
+				break
+			}
+			n := candidates[idx-1]
+			if !selected[n] {
+				selected[n] = true
+				result = append(result, n)
+			}
+		}
+		if valid && len(result) > 0 {
+			return result
+		}
+		fmt.Println("Invalid selection, please try again.")
+	}
+	log.Printf("Warning: no valid selection after 3 attempts; skipping removal.")
+	return nil
 }
 
 func displayPorts(ports []protocol.Port, jsonFormat *bool) {

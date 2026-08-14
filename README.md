@@ -337,6 +337,7 @@ image_name: myapp:latest
 - **private_key**: Path to SSH private key (optional, defaults to user's SSH keys)
 - **build_method**: 'dockerfile' or 'compose' (default: 'dockerfile')
 - **enable_revisions**: true/false (default: false)
+- **revisions_remove_previous**: after a successful `--new-revision` deploy, stop the revision(s) that were running before (optional, default: false). See [Revisions](#revisions)
 - **ekvs_enable / ekvs_server / ekvs_project / ekvs_private_key**: EKVS secret injection (optional). See [EKVS Integration](#ekvs-integration)
 - **continuity_enable**: enable the Continuity load balancer integration (optional, default: false)
 - **continuity_config**: path to a Continuity CLI config file (`host`/`port`/`default_pool`/`auth_key`) whose contents are forwarded to the server (required when `continuity_enable`)
@@ -396,6 +397,20 @@ You can create a new revision with the `--new-revision` flag during deployment:
 deployer-client deploy --new-revision
 ```
 All the commands (except `revisions`) accept a `--revision <revision_number>` flag to target a specific revision when the revisions are enabled.
+
+#### Automatically stopping the previous revision
+By default, deploying a new revision leaves the previous revision's container running. Set:
+
+```yaml
+revisions_remove_previous: true
+```
+
+to have the client, after a **successful** `--new-revision` deploy, stop the revision that was running before. It inspects the currently running revisions (as `revisions` does):
+- if exactly one previous revision is running, it is stopped automatically;
+- if more than one is running, you are prompted to choose which one(s) to stop (enter list numbers separated by comma/space, `all`, or leave empty to skip);
+- if the terminal is not interactive (e.g. CI) and there is more than one candidate, removal is skipped with a warning.
+
+The stopped revision's files are kept on the server, so you can still roll back to it. Removal is best-effort: a failure to stop a previous revision only warns and never fails an already-successful deploy.
 
 ### Build method
 The client supports two build methods:
