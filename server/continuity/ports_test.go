@@ -2,6 +2,7 @@ package continuity
 
 import (
 	"deployer/protocol"
+	"errors"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -126,4 +127,20 @@ func TestPickPublishedPort(t *testing.T) {
 			assert.Equal(t, tc.expectPort, port)
 		})
 	}
+}
+
+func TestPickPublishedPortReportsADownContainer(t *testing.T) {
+	// The reconciliation tells a container publishing nothing apart from a
+	// Docker that could not be asked, and only the first one costs a backend.
+	_, err := PickPublishedPort([]protocol.Port{
+		{LocalPort: "443", BindPort: "32768", Protocol: "tcp", Address: "0.0.0.0"},
+	}, "80")
+	require.Error(t, err)
+	assert.True(t, errors.Is(err, ErrNotPublished))
+
+	// A project without an internal port is a configuration problem, not a
+	// container that is down.
+	_, err = PickPublishedPort(nil, "")
+	require.Error(t, err)
+	assert.False(t, errors.Is(err, ErrNotPublished))
 }

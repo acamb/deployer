@@ -13,6 +13,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 )
 
 const (
@@ -31,8 +32,12 @@ const (
 type State struct {
 	// Deploy parameters: they only ever arrive with a request, are not
 	// derivable from Docker nor from Continuity, and are needed by every
-	// reconciliation pass, including after a restart of the server.
+	// reconciliation pass, including after a restart of the server. Container
+	// is among them because of the revisions: the container of a project using
+	// them is named after the revision currently deployed, which no
+	// reconciliation pass could guess from the project name alone.
 	Project         string `json:"project"`
+	Container       string `json:"container"`
 	Pool            string `json:"pool"`
 	HealthCheckPath string `json:"health_check_path"`
 	InternalPort    string `json:"internal_port"`
@@ -44,6 +49,16 @@ type State struct {
 	// label, tag) where the ownership of a backend could be marked, so the
 	// address of the backend registered for this project is tracked here.
 	LastAddress string `json:"last_address"`
+}
+
+// ContainerName returns the name of the container to ask Docker about. It falls
+// back to the project name, which is what Docker names the container of a
+// project without revisions.
+func (s *State) ContainerName() string {
+	if container := strings.TrimSpace(s.Container); container != "" {
+		return container
+	}
+	return s.Project
 }
 
 // Dir returns the directory holding the Continuity state of a project. The

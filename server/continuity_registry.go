@@ -42,6 +42,13 @@ func (r *projectRegistry) add(project string) {
 	r.names[project] = struct{}{}
 }
 
+// remove drops a project, as the reconciliation does when its state is gone.
+func (r *projectRegistry) remove(project string) {
+	r.mutex.Lock()
+	defer r.mutex.Unlock()
+	delete(r.names, project)
+}
+
 // list returns a snapshot of the registered projects, sorted so that logs and
 // reconciliation passes have a stable order.
 func (r *projectRegistry) list() []string {

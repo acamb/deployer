@@ -150,3 +150,13 @@ func TestUpdateDeployParamsFailsOnCorruptedState(t *testing.T) {
 	require.Error(t, err)
 	assert.Nil(t, state)
 }
+
+func TestContainerName(t *testing.T) {
+	// The container of a project with revisions carries the revision, which no
+	// reconciliation pass could derive from the project name.
+	assert.Equal(t, "myapp-2", (&State{Project: "myapp", Container: "myapp-2"}).ContainerName())
+	// Without revisions, and for the states written before the field existed,
+	// Docker names the container after the project.
+	assert.Equal(t, "myapp", (&State{Project: "myapp"}).ContainerName())
+	assert.Equal(t, "myapp", (&State{Project: "myapp", Container: "  "}).ContainerName())
+}

@@ -62,6 +62,7 @@ func registerBackendOn(client continuityClient, request protocol.Request) error 
 	// if the registration below fails or the server restarts right after.
 	state, err := continuity.UpdateDeployParams(dir, continuity.State{
 		Project:         request.Name,
+		Container:       containerName(request.Name, request.Revision),
 		Pool:            request.ContinuityPool,
 		HealthCheckPath: request.ContinuityHealthCheckPath,
 		InternalPort:    request.ContinuityInternalPort,
@@ -75,7 +76,7 @@ func registerBackendOn(client continuityClient, request protocol.Request) error 
 	// if the publication below fails: its state is on disk and the next startup
 	// scan would pick it up anyway.
 	continuityProjects.add(request.Name)
-	address, err := backendAddress(state, containerName(request.Name, request.Revision))
+	address, err := backendAddress(state, state.ContainerName())
 	if err != nil {
 		return err
 	}
@@ -84,7 +85,7 @@ func registerBackendOn(client continuityClient, request protocol.Request) error 
 
 // publishBackend runs the transaction adding address as a backend of the pool
 // and, when possible, removing the backend previously published for the
-// project. It is shared with the periodic reconciliation.
+// project.
 func publishBackend(client continuityClient, dir, cfgPath string, state *continuity.State, address string) error {
 	// A single pool config, taken *before* the transaction: the UUID of the
 	// previous backend is never stored, it is resolved from its address. A
@@ -95,6 +96,13 @@ func publishBackend(client continuityClient, dir, cfgPath string, state *continu
 	if err != nil {
 		return err
 	}
+	return publishBackendInPool(client, dir, cfgPath, state, address, pool)
+}
+
+// publishBackendInPool is publishBackend once the configuration of the pool is
+// known. The reconciliation reads that configuration to decide whether a repair
+// is needed at all, and hands it over instead of asking for it a second time.
+func publishBackendInPool(client continuityClient, dir, cfgPath string, state *continuity.State, address string, pool *continuity.Pool) error {
 	removeUUID := ""
 	if state.RemovePrevious && state.LastAddress != "" {
 		if previous, found := pool.FindByAddress(state.LastAddress); found {
@@ -150,9 +158,9 @@ func deregisterBackendOn(client continuityClient, project string) error {
 // removeBackend removes the backend currently published for the project and
 // clears LastAddress. It is shared with the periodic reconciliation.
 func removeBackend(client continuityClient, dir string, state *continuity.State) error {
-	cfgPath := filepath.Join(dir, continuity.ConfigFileName)
-	if _, err := os.Stat(cfgPath); err != nil {
-		return errors.New("cannot read the continuity configuration of " + state.Project + ": " + err.Error())
+	cfgPath, err := projectConfigPath(dir, state.Project)
+	if err != nil {
+		return err
 	}
 	pool, err := client.PoolConfig(context.Background(), cfgPath, state.Pool)
 	if err != nil {
@@ -172,6 +180,17 @@ func removeBackend(client continuityClient, dir string, state *continuity.State)
 	}
 	state.LastAddress = ""
 	return continuity.SaveState(dir, state)
+}
+
+// projectConfigPath returns the path of the continuity configuration written
+// for a project, checking that it is still there: without it no CLI call can be
+// made, and the reason has to reach the logs.
+func projectConfigPath(dir, project string) (string, error) {
+	cfgPath := filepath.Join(dir, continuity.ConfigFileName)
+	if _, err := os.Stat(cfgPath); err != nil {
+		return "", errors.New("cannot read the continuity configuration of " + project + ": " + err.Error())
+	}
+	return cfgPath, nil
 }
 
 // backendAddress computes the address under which the container is reachable

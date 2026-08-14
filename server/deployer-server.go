@@ -62,10 +62,11 @@ func main() {
 	// from the working directory: the per project .continuity directory is the
 	// only source of truth, there is no database.
 	loadContinuityRegistry(config.WorkingDirectory)
-	// The flag will be raised by the periodic reconciliation, once it has gone
-	// through the whole registry. Until that goroutine exists, the server is
-	// ready as soon as the registry has been loaded.
-	ready.Store(true)
+	// Requests are refused until the first pass of this loop is over: the
+	// server has to know what is published before touching it. The listener is
+	// started right away nonetheless, so that clients get a NotReady telling
+	// them to retry rather than a refused connection.
+	startContinuityReconciliation()
 
 	hostKey, err := loadHostKey(config)
 	if err != nil {
