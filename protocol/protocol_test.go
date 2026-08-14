@@ -3,6 +3,7 @@ package protocol
 import (
 	"bytes"
 	"encoding/gob"
+	"encoding/json"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -19,6 +20,8 @@ func TestCommandString(t *testing.T) {
 		{Start, "Start"},
 		{Restart, "Restart"},
 		{Logs, "Logs"},
+		{Ports, "Ports"},
+		{LbStatus, "LbStatus"},
 		{Command(999), "Unknown Command"},
 	}
 
@@ -237,6 +240,23 @@ func TestRequestGobEncoding_WithEkvsFields(t *testing.T) {
 	assert.Equal(t, original.EkvsServer, decoded.EkvsServer)
 	assert.Equal(t, original.EkvsProject, decoded.EkvsProject)
 	assert.Equal(t, original.EkvsPrivateKey, decoded.EkvsPrivateKey)
+}
+
+func TestLbStatusResponseJSONRoundTrip(t *testing.T) {
+	original := LbStatusResponse{
+		Hostname: "my-app.example.com",
+		Backends: []LbBackend{
+			{Address: "http://10.0.0.5:32768", Status: "Healthy", HealthCheckPath: "/health", Conditional: false},
+			{Address: "http://10.0.0.9:40000", Status: "Unhealthy", HealthCheckPath: "/healthz", Conditional: true},
+		},
+	}
+
+	data, err := json.Marshal(original)
+	require.NoError(t, err)
+
+	var decoded LbStatusResponse
+	require.NoError(t, json.Unmarshal(data, &decoded))
+	assert.Equal(t, original, decoded)
 }
 
 // Benchmark tests

@@ -3,7 +3,7 @@ services:
     image: test
     container_name: test
     ports:
-      - "8080:8080"
+      - "0:8080"
     build:
       context: .
       dockerfile: Dockerfile

@@ -11,6 +11,7 @@ const (
 	Revisions
 	Push
 	Ports
+	LbStatus
 )
 
 func (c Command) String() string {
@@ -31,6 +32,8 @@ func (c Command) String() string {
 		return "Push"
 	case Ports:
 		return "Ports"
+	case LbStatus:
+		return "LbStatus"
 	default:
 		return "Unknown Command"
 	}
@@ -119,6 +122,21 @@ type Port struct {
 	BindPort  string `json:"bindPort"`
 	Protocol  string `json:"protocol"`
 	Address   string `json:"address"`
+}
+
+// LbStatusResponse mirrors the configuration of the Continuity pool a project
+// is published on, as returned by the LbStatus command (essentially the output
+// of `continuity pool config`).
+type LbStatusResponse struct {
+	Hostname string      `json:"hostname"`
+	Backends []LbBackend `json:"backends"`
+}
+
+type LbBackend struct {
+	Address         string `json:"address"`
+	Status          string `json:"status"`
+	HealthCheckPath string `json:"healthCheckPath"`
+	Conditional     bool   `json:"conditional"`
 }
 
 func (r Response) String() string {

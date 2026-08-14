@@ -204,6 +204,31 @@ func Ports(name string, revision *int32, port *int32) ([]protocol.Port, error) {
 	return ports.Port, nil
 }
 
+// LbStatus asks the server for the configuration of the Continuity pool the
+// project is published on (essentially `continuity pool config`).
+func LbStatus(name string) (protocol.LbStatusResponse, error) {
+	request := protocol.Request{
+		Name:    name,
+		Command: protocol.LbStatus,
+		Version: version.Version,
+	}
+	if err := encoder.Encode(&request); err != nil {
+		return protocol.LbStatusResponse{}, err
+	}
+	response := protocol.Response{}
+	if err := decoder.Decode(&response); err != nil {
+		return protocol.LbStatusResponse{}, err
+	}
+	if response.Status != protocol.Ok {
+		return protocol.LbStatusResponse{}, responseError(response)
+	}
+	status := protocol.LbStatusResponse{}
+	if err := json.Unmarshal([]byte(response.Message), &status); err != nil {
+		return protocol.LbStatusResponse{}, err
+	}
+	return status, nil
+}
+
 func handleSimpleRequest(name string, req protocol.Command, revision int32, deleteFiles bool) error {
 	return handleRequest(name, req, "", nil, revision, deleteFiles, false)
 }

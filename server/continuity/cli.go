@@ -72,6 +72,22 @@ func (c *CLI) Transaction(ctx context.Context, cfgPath, pool, address, healthChe
 	return nil
 }
 
+// AddServer registers address as a backend of pool without a transaction. It
+// is used on the first deploy of a project, when the pool has no previous
+// backend to remove: `server transaction` requires a valid, existing
+// --remove-server UUID and fails against an empty pool, while `server add`
+// simply adds the backend.
+func (c *CLI) AddServer(ctx context.Context, cfgPath, pool, address, healthCheck string) error {
+	if strings.TrimSpace(address) == "" {
+		return errors.New("no address to publish as a continuity backend")
+	}
+	stdout, stderr, err := c.execute(ctx, buildServerAddArgs(cfgPath, pool, address, healthCheck))
+	if err != nil {
+		return commandError("add the backend", stdout, stderr, err)
+	}
+	return nil
+}
+
 // PoolConfig returns the current configuration of a pool. It is the only
 // command of the continuity CLI printing clean JSON on stdout, hence the only
 // way to resolve an address to the UUID continuity assigned to that backend.
@@ -118,6 +134,21 @@ func buildTransactionArgs(cfgPath, pool, address, healthCheck, removeUUID string
 	args = append(args, "--address", address)
 	args = appendFlag(args, "--health-check", healthCheck)
 	args = appendFlag(args, "--remove-server", removeUUID)
+	return args
+}
+
+// buildServerAddArgs returns the argv of a plain backend addition.
+//
+// --pool is omitted when empty (continuity falls back to its default_pool) and
+// --health-check is omitted when empty (continuity falls back to /health), like
+// buildTransactionArgs; there is no --remove-server, since `server add` never
+// removes anything.
+func buildServerAddArgs(cfgPath, pool, address, healthCheck string) []string {
+	args := configArgs(cfgPath)
+	args = append(args, "server", "add")
+	args = appendFlag(args, "--pool", pool)
+	args = append(args, "--address", address)
+	args = appendFlag(args, "--health-check", healthCheck)
 	return args
 }
 

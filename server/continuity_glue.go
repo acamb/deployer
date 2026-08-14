@@ -16,6 +16,7 @@ import (
 // without a Continuity server.
 type continuityClient interface {
 	Transaction(ctx context.Context, cfgPath, pool, address, healthCheck, removeUUID string) error
+	AddServer(ctx context.Context, cfgPath, pool, address, healthCheck string) error
 	PoolConfig(ctx context.Context, cfgPath, pool string) (*continuity.Pool, error)
 	RemoveServer(ctx context.Context, cfgPath, pool, uuid string) error
 }
@@ -114,12 +115,21 @@ func publishBackendInPool(client continuityClient, dir, cfgPath string, state *c
 				state.Project, state.LastAddress, state.Pool)
 		}
 	}
-	if err := client.Transaction(context.Background(), cfgPath, state.Pool, address, state.HealthCheckPath, removeUUID); err != nil {
-		return err
-	}
+	// With a previous backend to remove, a transaction adds the new backend and
+	// drops the old one only once the new one is healthy (zero downtime). With
+	// nothing to remove -- the first deploy, or a previous backend already gone
+	// -- a plain add is used instead: `server transaction` requires a valid,
+	// existing --remove-server UUID and would fail against an (for this project)
+	// empty pool.
 	if removeUUID != "" {
+		if err := client.Transaction(context.Background(), cfgPath, state.Pool, address, state.HealthCheckPath, removeUUID); err != nil {
+			return err
+		}
 		log.Printf("Continuity: %s published at %s, previous backend %s removed", state.Project, address, removeUUID)
 	} else {
+		if err := client.AddServer(context.Background(), cfgPath, state.Pool, address, state.HealthCheckPath); err != nil {
+			return err
+		}
 		log.Printf("Continuity: %s published at %s", state.Project, address)
 	}
 	state.LastAddress = address
@@ -180,6 +190,53 @@ func removeBackend(client continuityClient, dir string, state *continuity.State)
 	}
 	state.LastAddress = ""
 	return continuity.SaveState(dir, state)
+}
+
+// lbStatus returns the configuration of the Continuity pool a project is
+// published on, essentially the output of `continuity pool config`. It relies
+// on the state persisted at deploy time, so a project that was never deployed
+// with the integration enabled has no pool to look at.
+func lbStatus(project string) (protocol.LbStatusResponse, error) {
+	return lbStatusOn(newContinuityClient(), project)
+}
+
+func lbStatusOn(client continuityClient, project string) (protocol.LbStatusResponse, error) {
+	dir := continuity.Dir(config.WorkingDirectory, project)
+	state, err := continuity.LoadState(dir)
+	if err != nil {
+		return protocol.LbStatusResponse{}, err
+	}
+	if state == nil {
+		return protocol.LbStatusResponse{}, errors.New("continuity is not configured for project " + project + ": deploy it with the integration enabled first")
+	}
+	cfgPath, err := projectConfigPath(dir, project)
+	if err != nil {
+		return protocol.LbStatusResponse{}, err
+	}
+	pool, err := client.PoolConfig(context.Background(), cfgPath, state.Pool)
+	if err != nil {
+		return protocol.LbStatusResponse{}, err
+	}
+	return poolStatus(pool), nil
+}
+
+// poolStatus maps a continuity.Pool onto the wire payload, flagging conditional
+// backends so the client can tell them apart from the ones deployer publishes.
+func poolStatus(pool *continuity.Pool) protocol.LbStatusResponse {
+	response := protocol.LbStatusResponse{Hostname: pool.Hostname}
+	appendBackends := func(servers []continuity.ServerHost, conditional bool) {
+		for _, server := range servers {
+			response.Backends = append(response.Backends, protocol.LbBackend{
+				Address:         server.Address.String(),
+				Status:          server.ServerStatus,
+				HealthCheckPath: server.HealthCheckPath,
+				Conditional:     conditional,
+			})
+		}
+	}
+	appendBackends(pool.UnconditionalServers, false)
+	appendBackends(pool.ConditionalServers, true)
+	return response
 }
 
 // projectConfigPath returns the path of the continuity configuration written

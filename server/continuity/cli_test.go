@@ -112,6 +112,22 @@ func TestBuildTransactionArgs(t *testing.T) {
 	}
 }
 
+func TestBuildServerAddArgs(t *testing.T) {
+	// Every optional flag provided.
+	assert.Equal(t,
+		[]string{"-f", testConfigPath, "server", "add",
+			"--pool", "my-app.example.com",
+			"--address", "http://10.0.0.5:32768",
+			"--health-check", "/healthz"},
+		buildServerAddArgs(testConfigPath, "my-app.example.com", "http://10.0.0.5:32768", "/healthz"))
+
+	// No pool and no health check: continuity falls back to default_pool and
+	// /health. There is never a --remove-server, `server add` removes nothing.
+	assert.Equal(t,
+		[]string{"-f", testConfigPath, "server", "add", "--address", "http://10.0.0.5:32768"},
+		buildServerAddArgs(testConfigPath, "", "http://10.0.0.5:32768", ""))
+}
+
 func TestBuildPoolConfigArgs(t *testing.T) {
 	// The pool is a positional argument of `pool config`, not a flag.
 	assert.Equal(t,
@@ -202,6 +218,48 @@ func TestTransactionRequiresAddress(t *testing.T) {
 	cli := newTestCLI(runner)
 
 	err := cli.Transaction(context.Background(), testConfigPath, "my-app.example.com", "  ", "", "")
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "no address")
+	assert.Empty(t, runner.calls)
+}
+
+func TestAddServerSuccess(t *testing.T) {
+	// `server add` reports success on stderr and exits 0; unlike a transaction
+	// there is no rollback to detect.
+	runner := &fakeRunner{stderr: "Server added successfully to pool my-app.example.com\n"}
+	cli := newTestCLI(runner)
+
+	err := cli.AddServer(context.Background(), testConfigPath, "my-app.example.com", "http://10.0.0.5:32768", "/health")
+	require.NoError(t, err)
+
+	require.Len(t, runner.calls, 1)
+	assert.Equal(t, buildServerAddArgs(testConfigPath, "my-app.example.com", "http://10.0.0.5:32768", "/health"), runner.calls[0].args)
+	assert.True(t, runner.gotDeadline)
+}
+
+func TestAddServerCommandFailure(t *testing.T) {
+	// `server add` fails through the exit code (log.Fatal on a non-200), so the
+	// error carries whatever the CLI printed.
+	runner := &fakeRunner{
+		stdout: "some standard output",
+		stderr: "Request failed, server responded: 404 - pool not found",
+		err:    errors.New("exit status 1"),
+	}
+	cli := newTestCLI(runner)
+
+	err := cli.AddServer(context.Background(), testConfigPath, "missing.example.com", "http://10.0.0.5:32768", "")
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "could not add the backend")
+	assert.Contains(t, err.Error(), "exit status 1")
+	assert.Contains(t, err.Error(), "pool not found")
+	assert.Contains(t, err.Error(), "some standard output")
+}
+
+func TestAddServerRequiresAddress(t *testing.T) {
+	runner := &fakeRunner{}
+	cli := newTestCLI(runner)
+
+	err := cli.AddServer(context.Background(), testConfigPath, "my-app.example.com", "  ", "")
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "no address")
 	assert.Empty(t, runner.calls)

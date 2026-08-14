@@ -7,6 +7,7 @@ import (
 	"deployer/server/continuity"
 	serverVersion "deployer/server/version"
 	"encoding/gob"
+	"encoding/json"
 	"errors"
 	"os"
 	"path/filepath"
@@ -27,6 +28,14 @@ type fakeTransaction struct {
 	removeUUID  string
 }
 
+// fakeAdd is one `server add` captured by fakeContinuityClient.
+type fakeAdd struct {
+	cfgPath     string
+	pool        string
+	address     string
+	healthCheck string
+}
+
 // fakeRemoval is one `server del` captured by fakeContinuityClient.
 type fakeRemoval struct {
 	pool string
@@ -39,16 +48,23 @@ type fakeContinuityClient struct {
 	pool           *continuity.Pool
 	poolErr        error
 	transactionErr error
+	addErr         error
 	removeErr      error
 
 	poolConfigCalls int
 	transactions    []fakeTransaction
+	adds            []fakeAdd
 	removals        []fakeRemoval
 }
 
 func (f *fakeContinuityClient) Transaction(_ context.Context, cfgPath, pool, address, healthCheck, removeUUID string) error {
 	f.transactions = append(f.transactions, fakeTransaction{cfgPath, pool, address, healthCheck, removeUUID})
 	return f.transactionErr
+}
+
+func (f *fakeContinuityClient) AddServer(_ context.Context, cfgPath, pool, address, healthCheck string) error {
+	f.adds = append(f.adds, fakeAdd{cfgPath, pool, address, healthCheck})
+	return f.addErr
 }
 
 func (f *fakeContinuityClient) PoolConfig(_ context.Context, _, _ string) (*continuity.Pool, error) {
@@ -197,16 +213,17 @@ func TestRegisterBackendPublishesTheContainer(t *testing.T) {
 
 	// The published address is the advertise base plus the *host* port, the
 	// ephemeral one Docker assigned to the internal port of the container.
-	require.Len(t, client.transactions, 1)
-	assert.Equal(t, fakeTransaction{
+	// First deploy: nothing to remove, so a plain add is used, not a
+	// transaction (which would fail against an empty pool).
+	assert.Empty(t, client.transactions)
+	require.Len(t, client.adds, 1)
+	assert.Equal(t, fakeAdd{
 		cfgPath:     cfgPath,
 		pool:        "my-app.example.com",
 		address:     "http://10.0.0.5:32768",
 		healthCheck: "/health",
-		// First deploy: there is no previous backend to remove.
-		removeUUID: "",
-	}, client.transactions[0])
-	// A single pool config, taken before the transaction.
+	}, client.adds[0])
+	// A single pool config, taken before the publication.
 	assert.Equal(t, 1, client.poolConfigCalls)
 	assert.Equal(t, []string{"myapp"}, ports.calls)
 
@@ -317,8 +334,18 @@ func TestRegisterBackendRemovesThePreviousBackend(t *testing.T) {
 			request.ContinuityRemovePrevious = tc.removePrevious
 			require.NoError(t, registerBackend(request))
 
-			require.Len(t, client.transactions, 1)
-			assert.Equal(t, tc.expectUUID, client.transactions[0].removeUUID)
+			if tc.expectUUID != "" {
+				// A previous backend was resolved: the transaction adds the new
+				// one and drops it atomically.
+				require.Len(t, client.transactions, 1)
+				assert.Equal(t, tc.expectUUID, client.transactions[0].removeUUID)
+				assert.Empty(t, client.adds)
+			} else {
+				// Nothing to remove: a plain add, never a transaction.
+				assert.Empty(t, client.transactions)
+				require.Len(t, client.adds, 1)
+				assert.Equal(t, "http://10.0.0.5:32768", client.adds[0].address)
+			}
 			// The removal is part of the transaction, never a separate call.
 			assert.Empty(t, client.removals)
 
@@ -352,15 +379,23 @@ func TestRegisterBackendWithoutPublishedPort(t *testing.T) {
 
 func TestRegisterBackendKeepsThePreviousAddressWhenTheTransactionFails(t *testing.T) {
 	setupTestEnvironment(t)
-	client := &fakeContinuityClient{transactionErr: errors.New("the continuity transaction was rolled back: new server is not healthy")}
+	// The previous backend is in the pool, so a transaction is used to replace
+	// it, and it is the transaction that fails here.
+	client := &fakeContinuityClient{
+		pool: &continuity.Pool{UnconditionalServers: []continuity.ServerHost{
+			continuityBackend("cbfca8b3", "http://10.0.0.5:32000"),
+		}},
+		transactionErr: errors.New("the continuity transaction was rolled back: new server is not healthy"),
+	}
 	useFakeContinuity(t, client, publishedPorts())
 
 	dir := continuity.Dir(config.WorkingDirectory, "myapp")
 	require.NoError(t, continuity.SaveState(dir, &continuity.State{
-		Project:      "myapp",
-		Pool:         "my-app.example.com",
-		InternalPort: "80",
-		LastAddress:  "http://10.0.0.5:32000",
+		Project:        "myapp",
+		Pool:           "my-app.example.com",
+		InternalPort:   "80",
+		RemovePrevious: true,
+		LastAddress:    "http://10.0.0.5:32000",
 	}))
 
 	err := registerBackend(continuityRequest("myapp"))
@@ -589,6 +624,100 @@ func TestStopDeregistersBeforeDeletingTheFiles(t *testing.T) {
 	assert.Equal(t, []fakeRemoval{{pool: "my-app.example.com", uuid: "cbfca8b3"}}, client.removals)
 	_, err = os.Stat(dir)
 	assert.True(t, os.IsNotExist(err), "the working directory of the project must be gone")
+}
+
+func TestLbStatusReturnsThePoolBackends(t *testing.T) {
+	setupTestEnvironment(t)
+	client := &fakeContinuityClient{pool: &continuity.Pool{
+		Hostname: "my-app.example.com",
+		UnconditionalServers: []continuity.ServerHost{
+			continuityBackend("cbfca8b3", "http://10.0.0.5:32768"),
+		},
+		ConditionalServers: []continuity.ServerHost{
+			continuityBackend("aa11bb22", "http://10.0.0.9:40000"),
+		},
+	}}
+	useFakeContinuity(t, client, publishedPorts())
+
+	dir := continuity.Dir(config.WorkingDirectory, "myapp")
+	_, err := continuity.WriteProjectConfig(dir, []byte("host: http://continuity.example.com\n"), nil)
+	require.NoError(t, err)
+	require.NoError(t, continuity.SaveState(dir, &continuity.State{
+		Project: "myapp",
+		Pool:    "my-app.example.com",
+	}))
+
+	status, err := lbStatus("myapp")
+	require.NoError(t, err)
+
+	assert.Equal(t, "my-app.example.com", status.Hostname)
+	require.Len(t, status.Backends, 2)
+	// Unconditional backends come first and are flagged as such.
+	assert.Equal(t, protocol.LbBackend{
+		Address:         "http://10.0.0.5:32768",
+		Status:          "Healthy",
+		HealthCheckPath: "",
+		Conditional:     false,
+	}, status.Backends[0])
+	assert.Equal(t, "http://10.0.0.9:40000", status.Backends[1].Address)
+	assert.True(t, status.Backends[1].Conditional)
+	assert.Equal(t, 1, client.poolConfigCalls)
+}
+
+func TestLbStatusWithoutState(t *testing.T) {
+	setupTestEnvironment(t)
+	client := &fakeContinuityClient{}
+	useFakeContinuity(t, client, publishedPorts())
+
+	// The project was never deployed with the integration enabled.
+	_, err := lbStatus("never-deployed")
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "not configured")
+	assert.Equal(t, 0, client.poolConfigCalls)
+}
+
+func TestLbStatusOverTheProtocol(t *testing.T) {
+	setupTestEnvironment(t)
+	client := &fakeContinuityClient{pool: &continuity.Pool{
+		Hostname: "my-app.example.com",
+		UnconditionalServers: []continuity.ServerHost{
+			continuityBackend("cbfca8b3", "http://10.0.0.5:32768"),
+		},
+	}}
+	useFakeContinuity(t, client, publishedPorts())
+
+	dir := continuity.Dir(config.WorkingDirectory, "myapp")
+	_, err := continuity.WriteProjectConfig(dir, []byte("host: http://continuity.example.com\n"), nil)
+	require.NoError(t, err)
+	require.NoError(t, continuity.SaveState(dir, &continuity.State{Project: "myapp", Pool: "my-app.example.com"}))
+
+	response := handleContinuityRequest(t, protocol.Request{
+		Version: serverVersion.Version,
+		Command: protocol.LbStatus,
+		Name:    "myapp",
+	})
+
+	require.Equal(t, protocol.Ok, response.Status)
+	var status protocol.LbStatusResponse
+	require.NoError(t, json.Unmarshal([]byte(response.Message), &status))
+	assert.Equal(t, "my-app.example.com", status.Hostname)
+	require.Len(t, status.Backends, 1)
+	assert.Equal(t, "http://10.0.0.5:32768", status.Backends[0].Address)
+}
+
+func TestLbStatusOverTheProtocolWithoutState(t *testing.T) {
+	setupTestEnvironment(t)
+	client := &fakeContinuityClient{}
+	useFakeContinuity(t, client, publishedPorts())
+
+	response := handleContinuityRequest(t, protocol.Request{
+		Version: serverVersion.Version,
+		Command: protocol.LbStatus,
+		Name:    "never-deployed",
+	})
+
+	assert.Equal(t, protocol.Ko, response.Status)
+	assert.Contains(t, response.Message, "not configured")
 }
 
 func TestStopStaysOkWhenContinuityFails(t *testing.T) {

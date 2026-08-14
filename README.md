@@ -373,6 +373,8 @@ deployer-client stop [--revision]                              # Stop container
 deployer-client restart [--revision]                           # Restart container
 deployer-client logs [--revision]                              # View container logs
 deployer-client revisions                                      # List running revisions of the application
+deployer-client ports [--port] [--revision] [--json]           # List the ports published by the container
+deployer-client lb-status [--json]                             # Show the Continuity load balancer pool the project is published on
 ```
 
 
@@ -589,6 +591,23 @@ On `deployer stop`, the server deregisters the current backend from the pool
 and clears the stored address, but keeps the rest of the project state, so that
 if the container comes back up (Docker restart policy, manual `docker start`)
 the next reconciliation re-registers it.
+
+### Checking the load balancer
+
+`deployer-client lb-status` shows the Continuity pool the project is published
+on, with each backend and its health status (essentially the output of
+`continuity pool config`):
+
+```bash
+deployer-client lb-status
+# Pool: my-app.example.com
+# - http://10.0.0.5:32768 [Healthy] health-check: /health (unconditional)
+
+deployer-client lb-status --json   # same information as JSON
+```
+
+It relies on the state persisted at deploy time, so the project must have been
+deployed at least once with the integration enabled.
 
 ### Security notes
 - When `continuity_private_key` is set, the key is transmitted over the

@@ -33,3 +33,4 @@
      - New client config: continuity_enable, continuity_config, continuity_pool,
             continuity_health_check_path, continuity_internal_port, continuity_remove_previous,
             continuity_advertise_base, continuity_private_key.
+     - New 'lb-status' command to show the Continuity pool a project is published on.

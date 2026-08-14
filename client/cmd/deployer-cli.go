@@ -22,6 +22,7 @@ func main() {
 	var port *int32 //used in Ports command
 	var newRevision *bool
 	var json *bool
+	var lbStatusJson *bool
 	var prune *bool
 	var deleteFiles *bool
 	rootCmd := &cobra.Command{
@@ -251,6 +252,21 @@ func main() {
 	json = portsCommand.Flags().BoolP("json", "j", false, "Format output as json")
 	rootCmd.AddCommand(portsCommand)
 
+	lbStatusCommand := &cobra.Command{
+		Use:   "lb-status",
+		Short: "Show the Continuity load balancer pool the project is published on",
+		Run: func(cmd *cobra.Command, args []string) {
+			Connect(configuration)
+			status, err := client.LbStatus(configuration.Name)
+			if err != nil {
+				log.Fatal(err)
+			}
+			displayLbStatus(status, lbStatusJson)
+		},
+	}
+	lbStatusJson = lbStatusCommand.Flags().BoolP("json", "j", false, "Format output as json")
+	rootCmd.AddCommand(lbStatusCommand)
+
 	rootCmd.AddCommand(&cobra.Command{
 		Use:   "revisions",
 		Short: "List the revisions running on the remote container",
@@ -378,5 +394,25 @@ func displayPorts(ports []protocol.Port, jsonFormat *bool) {
 		for _, port := range ports {
 			fmt.Printf("Address: %s, Container port: %s, Host port: %s, Protocol: %s\n", port.Address, port.LocalPort, port.BindPort, port.Protocol)
 		}
+	}
+}
+
+func displayLbStatus(status protocol.LbStatusResponse, jsonFormat *bool) {
+	if *jsonFormat {
+		j, _ := json.Marshal(status)
+		fmt.Println(string(j))
+		return
+	}
+	fmt.Printf("Pool: %s\n", status.Hostname)
+	if len(status.Backends) == 0 {
+		fmt.Println("No backends registered")
+		return
+	}
+	for _, backend := range status.Backends {
+		kind := "unconditional"
+		if backend.Conditional {
+			kind = "conditional"
+		}
+		fmt.Printf("- %s [%s] health-check: %s (%s)\n", backend.Address, backend.Status, backend.HealthCheckPath, kind)
 	}
 }

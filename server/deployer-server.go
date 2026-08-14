@@ -310,6 +310,18 @@ func handleRequest(dataChannel ssh.Channel) {
 			_ = handleResponse(fmt.Sprintf("Error preparing ports response: %v", err), protocol.Ko, encoder)
 		}
 		err = handleResponse(string(message), protocol.Ok, encoder)
+	} else if request.Command == protocol.LbStatus {
+		status, err := lbStatus(request.Name)
+		if err != nil {
+			_ = handleResponse(err.Error(), protocol.Ko, encoder)
+			return
+		}
+		message, err := json.Marshal(status)
+		if err != nil {
+			_ = handleResponse(fmt.Sprintf("Error preparing load balancer status response: %v", err), protocol.Ko, encoder)
+			return
+		}
+		_ = handleResponse(string(message), protocol.Ok, encoder)
 	} else {
 		_ = handleResponse(fmt.Sprintf("Unknown command: %v", request.Command), protocol.Ko, encoder)
 		log.Printf("Unknown request received: %v", request.String())

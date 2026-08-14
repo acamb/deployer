@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"deployer/protocol"
 	"encoding/gob"
+	"encoding/json"
 	"errors"
 	"io"
 	"os"
@@ -315,6 +316,47 @@ func TestHandleRequestEncoding(t *testing.T) {
 	// Call handleRequest directly
 	err = handleRequest("test-container", protocol.Deploy, tarFile, composeFileHandle, -1, false, false)
 	assert.NoError(t, err)
+}
+
+func TestLbStatus(t *testing.T) {
+	mockChannel := setupMockConnection(t)
+
+	payload, err := json.Marshal(protocol.LbStatusResponse{
+		Hostname: "my-app.example.com",
+		Backends: []protocol.LbBackend{
+			{Address: "http://10.0.0.5:32768", Status: "Healthy", HealthCheckPath: "/health", Conditional: false},
+		},
+	})
+	require.NoError(t, err)
+	response := protocol.Response{Status: protocol.Ok, Message: string(payload)}
+	responseBuffer := &bytes.Buffer{}
+	require.NoError(t, gob.NewEncoder(responseBuffer).Encode(&response))
+	mockChannel.Write(responseBuffer.Bytes())
+
+	status, err := LbStatus("test-container")
+	require.NoError(t, err)
+	assert.Equal(t, "my-app.example.com", status.Hostname)
+	require.Len(t, status.Backends, 1)
+	assert.Equal(t, "http://10.0.0.5:32768", status.Backends[0].Address)
+
+	// The request carried the LbStatus command and the project name.
+	var sent protocol.Request
+	require.NoError(t, gob.NewDecoder(mockChannel).Decode(&sent))
+	assert.Equal(t, protocol.LbStatus, sent.Command)
+	assert.Equal(t, "test-container", sent.Name)
+}
+
+func TestLbStatusServerError(t *testing.T) {
+	mockChannel := setupMockConnection(t)
+
+	response := protocol.Response{Status: protocol.Ko, Message: "continuity is not configured for project test-container"}
+	responseBuffer := &bytes.Buffer{}
+	require.NoError(t, gob.NewEncoder(responseBuffer).Encode(&response))
+	mockChannel.Write(responseBuffer.Bytes())
+
+	_, err := LbStatus("test-container")
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "not configured")
 }
 
 func TestConnectionFailure(t *testing.T) {

@@ -96,11 +96,11 @@ func TestReconcileOmitsAPreviousBackendNoLongerInThePool(t *testing.T) {
 
 	reconcileContinuity()
 
-	require.Len(t, client.transactions, 1)
-	assert.Equal(t, "http://10.0.0.5:32768", client.transactions[0].address)
-	// An unknown UUID would make the whole transaction fail before adding the
-	// new backend, so the flag is simply omitted.
-	assert.Empty(t, client.transactions[0].removeUUID)
+	// There is no previous backend to remove (the address is gone), so the
+	// republication is a plain add, not a transaction.
+	assert.Empty(t, client.transactions)
+	require.Len(t, client.adds, 1)
+	assert.Equal(t, "http://10.0.0.5:32768", client.adds[0].address)
 	assert.Equal(t, "http://10.0.0.5:32768", reconciledState(t, dir).LastAddress)
 }
 
@@ -118,9 +118,10 @@ func TestReconcilePublishesAContainerBackUp(t *testing.T) {
 
 	reconcileContinuity()
 
-	require.Len(t, client.transactions, 1)
-	assert.Equal(t, "http://10.0.0.5:32768", client.transactions[0].address)
-	assert.Empty(t, client.transactions[0].removeUUID)
+	// Nothing was published for the project, so it is a plain add.
+	assert.Empty(t, client.transactions)
+	require.Len(t, client.adds, 1)
+	assert.Equal(t, "http://10.0.0.5:32768", client.adds[0].address)
 	assert.Equal(t, "http://10.0.0.5:32768", reconciledState(t, dir).LastAddress)
 }
 
@@ -279,7 +280,9 @@ func TestReconcileAfterAStopKeepsTheProjectRegistered(t *testing.T) {
 	ports.ports = []protocol.Port{{LocalPort: "80", BindPort: "40000", Protocol: "tcp", Address: "0.0.0.0"}}
 	reconcileContinuity()
 
-	require.Len(t, client.transactions, 1)
-	assert.Equal(t, "http://10.0.0.5:40000", client.transactions[0].address)
+	// The pool is empty again (the stop removed the backend), so bringing the
+	// project back is a plain add.
+	require.Len(t, client.adds, 1)
+	assert.Equal(t, "http://10.0.0.5:40000", client.adds[0].address)
 	assert.Equal(t, "http://10.0.0.5:40000", reconciledState(t, dir).LastAddress)
 }
