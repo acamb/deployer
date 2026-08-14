@@ -1,0 +1,16 @@
+# Continuity CLI config forwarded by the deployer client to the deployer
+# server (see continuity_config in config.yaml).
+#
+# `host` MUST include the scheme. continuity runs as a service in the same
+# compose project as the deployer-test-server (testenv/server/compose.yml), so
+# it is reachable by service name on the shared default network.
+host: http://continuity
+port: 8090
+default_pool: test.local
+# auth_key must be an ABSOLUTE path on the deployer *server*. In the
+# deployer-managed key path (continuity_private_key set in config.yaml) the
+# server rewrites this field to point at the copy it stores under
+# <workingDirectory>/<name>/.continuity/key, so this value is only a
+# placeholder. In the server-managed path (continuity_private_key unset) it
+# must already point to a passphrase-less key present on the server.
+auth_key: /opt/deployer/continuity_key

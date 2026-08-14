@@ -11,6 +11,7 @@ Deployer is designed for homelabs and small infrastructure setups where you need
 - **Docker Integration**: Deploy and manage Docker containers remotely: deploy, start, stop, and view logs
 - **Secure Communication**: All data encrypted over SSH channels, public key authentication and host key verification
 - **Revisions**: deploy multiple revisions of your application, roll back to previous versions easily
+- **Load balancer integration**: optionally register deployed containers as backends on a [Continuity](https://github.com/acamb/continuity) pool for zero-downtime deployments, with periodic reconciliation
 
 ## Architecture
 
@@ -220,6 +221,9 @@ ssh -p 7676 deployer@localhost
 - **listenAddress**: Bind address (default: 0.0.0.0)
 - **workingDirectory**: Working directory for containers (default: /opt/deployer)
 - **hostKeyPath**: SSH host key path (default: /opt/deployer/host_rsa_key)
+- **ekvs_bin**: path to the `ekvs` CLI binary (optional; defaults to `ekvs` from PATH)
+- **continuity_bin**: path to the `continuity` CLI binary (optional; defaults to `continuity` from PATH). See [Continuity Integration](#continuity-integration)
+- **continuity_advertise_base**: base URL, scheme included and without port (e.g. `http://10.0.0.5`), under which deployed containers are reachable by Continuity. When empty the server falls back to `http://` + hostname (optional)
 
 **⚠️ Security Requirements:**
 - `authorized_keys` file permissions: `600` (read/write owner only)
@@ -333,6 +337,15 @@ image_name: myapp:latest
 - **private_key**: Path to SSH private key (optional, defaults to user's SSH keys)
 - **build_method**: 'dockerfile' or 'compose' (default: 'dockerfile')
 - **enable_revisions**: true/false (default: false)
+- **ekvs_enable / ekvs_server / ekvs_project / ekvs_private_key**: EKVS secret injection (optional). See [EKVS Integration](#ekvs-integration)
+- **continuity_enable**: enable the Continuity load balancer integration (optional, default: false)
+- **continuity_config**: path to a Continuity CLI config file (`host`/`port`/`default_pool`/`auth_key`) whose contents are forwarded to the server (required when `continuity_enable`)
+- **continuity_pool**: target Continuity pool; optional when the forwarded config sets `default_pool`
+- **continuity_internal_port**: container port to publish as a backend, 1–65535 (required when `continuity_enable`)
+- **continuity_health_check_path**: health check path, must start with `/` (optional; Continuity defaults to `/health`)
+- **continuity_remove_previous**: remove the previous backend after registering the new one (optional, default: false)
+- **continuity_advertise_base**: per-project override of the server's `continuity_advertise_base` (optional)
+- **continuity_private_key**: path to the Continuity auth key managed by deployer (optional; see [Continuity Integration](#continuity-integration))
 
 ### 4. Build Client (if needed)
 
@@ -475,6 +488,17 @@ as an external process (same approach used for the EKVS integration).
 - The `continuity` CLI installed on the deployer **server**. By default it
   is looked up in `PATH`; you can override it via `continuity_bin` in the
   server configuration.
+- **Version lockstep**: the `continuity` CLI on the deployer server must be
+  the **same version** as the Continuity server. The CLI aborts every command
+  when the versions differ.
+- In the forwarded Continuity config, `host` must include the scheme
+  (e.g. `http://continuity.example.com`, not `continuity.example.com`).
+- `auth_key` must be an **absolute** path on the deployer **server** — Continuity
+  does not expand `~`. In the deployer-managed key path (see below) the server
+  fills this in for you.
+- The Continuity auth key must **not** have a passphrase.
+- The clock skew between the deployer server and the Continuity server must be
+  under 30 s (the signature validity window used for authentication).
 
 ### Server configuration (optional)
 ```yaml
@@ -497,6 +521,7 @@ continuity_pool: 'myapp.example.com'
 continuity_health_check_path: '/health'
 continuity_internal_port: '8080'
 continuity_remove_previous: true
+# continuity_advertise_base: 'http://10.0.0.5'      # optional, overrides the server default
 # continuity_private_key: '~/.ssh/continuity_key'   # optional, see below
 ```
 
@@ -514,6 +539,56 @@ two mutually exclusive paths:
   No key is sent; the server persists `continuity_config` unmodified,
   assuming its `auth_key` already points to a key placed manually on the
   server.
+
+### Advertise address
+
+The backend address registered on Continuity is
+`<advertise_base>:<published_docker_port>`. The base is resolved, in order:
+
+1. `continuity_advertise_base` from the client config (per project);
+2. `continuity_advertise_base` from the server config;
+3. `http://` + the server hostname.
+
+The base must include the scheme and must not carry a port or path
+(the published Docker port is appended automatically).
+
+### Server-side state
+
+For every project with the integration enabled, the server keeps a
+directory under the working directory (state lives at the **project** level,
+never per-revision):
+
+```
+/opt/deployer/<name>/.continuity/
+    config.yaml    # the forwarded Continuity config (auth_key rewritten in the managed-key path)
+    key            # the managed key, 0600 (only in the deployer-managed key path)
+    state.json     # deploy parameters + the address of the current backend
+```
+
+The in-memory project registry is rebuilt at startup by scanning these
+directories — there is no central index file.
+
+### Readiness and reconciliation
+
+- **Readiness gate**: until the server has completed its first reconciliation
+  pass over all registered projects, every incoming request is rejected with a
+  `NotReady` status and the client is told to retry in a few seconds. If
+  Continuity is unreachable the pass still completes (errors are logged) so the
+  server never stays blocked.
+- **Reconciliation**: once at startup and then every minute, the server
+  compares the real state (the port published by Docker) with what is
+  configured on Continuity and repairs any drift — re-registering a backend
+  after an ephemeral port change, a host reboot or a manual removal, and
+  deregistering a project whose container is no longer publishing a port.
+  Reconciliation only touches backends whose address is the project's current
+  or previous address; unrelated backends in the same pool are left untouched.
+
+### Stop behavior
+
+On `deployer stop`, the server deregisters the current backend from the pool
+and clears the stored address, but keeps the rest of the project state, so that
+if the container comes back up (Docker restart policy, manual `docker start`)
+the next reconciliation re-registers it.
 
 ### Security notes
 - When `continuity_private_key` is set, the key is transmitted over the

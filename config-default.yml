@@ -6,3 +6,14 @@ hostKeyPath: /opt/deployer/host_rsa_key
 # When unset, the server uses `ekvs` from PATH.
 # ekvs_bin: /usr/local/bin/ekvs
 
+# Optional path to the `continuity` CLI binary used for the load balancer
+# integration. When unset, the server uses `continuity` from PATH.
+# The CLI version must match the Continuity server version (version lockstep).
+# continuity_bin: /usr/local/bin/continuity
+
+# Optional base URL (scheme included, no port) under which containers deployed
+# on this server are reachable by Continuity. The published Docker port is
+# appended to it to build the backend address. A client may override it per
+# project; when both are empty the server falls back to http://<hostname>.
+# continuity_advertise_base: http://10.0.0.5
+

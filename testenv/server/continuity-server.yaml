@@ -1,0 +1,17 @@
+# Continuity server config for the test environment.
+# Field names follow continuity's yaml.v2 defaults (lower-cased struct field
+# names); note `managenentaddress` is spelled as in continuity itself.
+# Mounted read-only: continuity's autosave to this file will fail harmlessly,
+# the pool state lives in-memory and deployer's reconciliation re-adds backends.
+address: 0.0.0.0
+port: 80
+managenentaddress: 0.0.0.0
+managementport: 8090
+authorizedkeys: /opt/continuity/authorized_keys
+pools:
+  - hostname: test.local
+    healthcheckintervalseconds: 5
+    healthcheckinitialdelayseconds: 2
+    healthchecktimeoutseconds: 5
+    healthcheck_numok: 1
+    healthcheck_numfail: 1
