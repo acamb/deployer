@@ -345,7 +345,7 @@ image_name: myapp:latest
 - **continuity_health_check_path**: health check path, must start with `/` (optional; Continuity defaults to `/health`)
 - **continuity_remove_previous**: remove the previous backend after registering the new one (optional, default: false)
 - **continuity_advertise_base**: base URL, scheme included and without port or path (e.g. `http://10.0.0.5`), under which the container is reachable by Continuity (required when `continuity_enable`)
-- **continuity_private_key**: path to the Continuity auth key managed by deployer (optional; see [Continuity Integration](#continuity-integration))
+- **continuity_private_key**: path to the Continuity auth key managed by deployer (optional; if unset, `auth_key` in `continuity_config` is used if present, otherwise no authentication — see [Continuity Integration](#continuity-integration))
 
 ### 4. Build Client (if needed)
 
@@ -546,15 +546,20 @@ continuity_advertise_base: 'http://10.0.0.5'        # required: base URL (scheme
 deployer server on every `deploy`, `start` and `restart` command.
 
 The private key used to authenticate against Continuity is handled through
-two mutually exclusive paths:
+these mutually exclusive paths:
 - **Managed by deployer**: set `continuity_private_key` to a key file path.
   The client reads and sends its contents to the server, which stores a
   copy in the project's working directory and rewrites `auth_key` in the
   forwarded `continuity_config` to point at it.
-- **Already present on the server**: leave `continuity_private_key` unset.
+- **Already present on the server**: leave `continuity_private_key` unset and
+  set `auth_key` in `continuity_config` to an absolute path on the server.
   No key is sent; the server persists `continuity_config` unmodified,
   assuming its `auth_key` already points to a key placed manually on the
   server.
+- **No authentication**: leave `continuity_private_key` unset and omit
+  `auth_key` from `continuity_config`. Nothing is sent and the file is
+  forwarded verbatim; use this when the Continuity server does not require
+  authentication.
 
 ### Advertise address
 

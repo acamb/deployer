@@ -175,9 +175,10 @@ func validateEkvs(config *Configuration) error {
 
 // validateContinuity validates the Continuity integration fields. Unlike
 // validateEkvs, ContinuityPrivateKey has no fallback: an empty value is a
-// deliberate choice meaning the auth_key referenced inside ContinuityConfig
-// already points to a key present on the server (Path B), so no local file
-// is required or checked here in that case.
+// deliberate choice meaning either the auth_key referenced inside
+// ContinuityConfig already points to a key present on the server (Path B), or
+// authentication is not used at all (auth_key also empty). Either way no local
+// file is required or checked here in that case.
 func validateContinuity(config *Configuration) error {
 	if !config.ContinuityEnable {
 		return nil
@@ -254,9 +255,11 @@ func validateAdvertiseBase(config *Configuration) error {
 // whose contents are forwarded to the server, checking the mistakes Continuity
 // itself cannot recover from and that would otherwise only surface on the
 // server: a 'host' without scheme (continuity builds its endpoint by plain
-// concatenation), a pool that cannot be resolved, and — in Path B only — an
-// 'auth_key' that is not an absolute path (continuity does no `~` expansion
-// and resolves it on the server's filesystem).
+// concatenation), a pool that cannot be resolved, and — in Path B only, when
+// an 'auth_key' is present — an 'auth_key' that is not an absolute path
+// (continuity does no `~` expansion and resolves it on the server's
+// filesystem). In Path B an empty 'auth_key' is allowed: continuity does not
+// necessarily require authentication, so no key is then used.
 func validateContinuityFile(config *Configuration) error {
 	data, err := os.ReadFile(config.ContinuityConfig)
 	if err != nil {
@@ -286,7 +289,10 @@ func validateContinuityFile(config *Configuration) error {
 	}
 	authKey := strings.TrimSpace(file.AuthKey)
 	if authKey == "" {
-		return fmt.Errorf("continuity_private_key is not set and continuity_config %q has no 'auth_key': no key would be available to authenticate against continuity", config.ContinuityConfig)
+		// Path B without authentication: continuity does not necessarily
+		// require an auth_key, so an empty one is a deliberate choice. The
+		// file is forwarded verbatim and there is nothing to validate.
+		return nil
 	}
 	if strings.HasPrefix(authKey, "~") {
 		return fmt.Errorf("'auth_key' %q in continuity_config %q must be an absolute path: continuity does not expand '~'", authKey, config.ContinuityConfig)
@@ -416,8 +422,9 @@ image_name: myapp:latest
 ## - if set, the key is read here and sent to the server, which will copy
 ##   it into the project's working directory and rewrite auth_key in the
 ##   forwarded continuity_config to point at it;
-## - if left empty, auth_key in continuity_config is assumed to already
-##   point to a key present on the server, placed there manually.
+## - if left empty, auth_key in continuity_config (when present) is assumed
+##   to already point to a key present on the server, placed there manually;
+## - if left empty and auth_key is also absent, no authentication is used.
 ##continuity_advertise_base is required when continuity_enable is true: the
 ##base URL under which the container is reachable by continuity. Scheme
 ##included, no port and no path — the published container port is appended by

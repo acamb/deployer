@@ -12,11 +12,11 @@ all: server client
 
 server:
 	mkdir -p $(BINDIR)
-	go build -ldflags "-X 'deployer/server/version.Version=$(VERSION)'" -o $(BINDIR)/deployer-server_$(VERSION) ./server
+	GOOS=linux GOARCH=amd64 go build -ldflags "-X 'deployer/server/version.Version=$(VERSION)'" -o $(BINDIR)/deployer-server_$(VERSION) ./server
 
 client:
 	mkdir -p $(BINDIR)
-	go build -ldflags "-X 'deployer/client/version.Version=$(VERSION)'" -o $(BINDIR)/deployer-client_$(VERSION) ./client/cmd
+	GOOS=linux GOARCH=amd64 go build -ldflags "-X 'deployer/client/version.Version=$(VERSION)'" -o $(BINDIR)/deployer-client_$(VERSION) ./client/cmd
 
 client-windows:
 	mkdir -p $(BINDIR)

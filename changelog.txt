@@ -33,6 +33,8 @@
      - New client config: continuity_enable, continuity_config, continuity_pool,
             continuity_health_check_path, continuity_internal_port, continuity_remove_previous,
             continuity_advertise_base, continuity_private_key.
+        - Continuity authentication is optional: if continuity_private_key is unset and
+          continuity_config has no 'auth_key', the integration is used without authentication.
      - New 'lb-status' command to show the Continuity pool a project is published on.
     Added 'revisions_remove_previous' client config: after a successful --new-revision deploy,
     stop the revision(s) that were running before. If more than one is running you are prompted

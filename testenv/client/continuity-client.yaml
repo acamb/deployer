@@ -13,4 +13,4 @@ default_pool: test.local
 # <workingDirectory>/<name>/.continuity/key, so this value is only a
 # placeholder. In the server-managed path (continuity_private_key unset) it
 # must already point to a passphrase-less key present on the server.
-auth_key: /opt/deployer/continuity_key
+#auth_key: /opt/deployer/continuity_key

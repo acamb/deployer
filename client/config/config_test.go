@@ -399,8 +399,7 @@ func TestValidateContinuity(t *testing.T) {
 			"does not expand '~'"},
 		{"RelativeAuthKeyInPathB", func(c *Configuration) { c.ContinuityConfig = relativeAuthKey },
 			"must be an absolute path"},
-		{"MissingAuthKeyInPathB", func(c *Configuration) { c.ContinuityConfig = noAuthKey },
-			"has no 'auth_key'"},
+		{"NoAuthKeyInPathBMeansNoAuth", func(c *Configuration) { c.ContinuityConfig = noAuthKey }, ""},
 		{"TildeAuthKeyIgnoredInPathA", func(c *Configuration) {
 			// Path A rewrites auth_key on the server, so its current value
 			// is irrelevant.
