@@ -87,9 +87,10 @@ type Request struct {
 	// CLI configuration file (host/port/default_pool/auth_key). When
 	// ContinuityPrivateKey is empty, auth_key is expected to already
 	// point to a key present on the server (placed there manually).
-	// ContinuityAdvertiseBase is the optional base URL (scheme included,
-	// no port) under which the container must be reachable by Continuity.
-	// When empty the server falls back to its own configuration.
+	// ContinuityAdvertiseBase is the base URL (scheme included, no port)
+	// under which the container must be reachable by Continuity. It is a
+	// per-project property supplied by the client and has no server-side
+	// default.
 	ContinuityEnable          bool
 	ContinuityConfig          []byte
 	ContinuityPrivateKey      []byte

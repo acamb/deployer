@@ -26,7 +26,7 @@ RUN addgroup -S deployer-server && \
     mkdir -p /opt/deployer && chown deployer-server:deployer-server /opt/deployer && \
     printf "%s" "${HOST_RSA_KEY}" > /opt/deployer/host_rsa_key && \
     chown deployer-server:deployer-server /opt/deployer/host_rsa_key && chmod 600 /opt/deployer/host_rsa_key && \
-    printf "port: 7676\nlistenAddress: 0.0.0.0\nworkingDirectory: /opt/deployer\nhostKeyPath: /opt/deployer/host_rsa_key\ncontinuity_advertise_base: http://docker\n" > /opt/deployer/config.yaml && \
+    printf "port: 7676\nlistenAddress: 0.0.0.0\nworkingDirectory: /opt/deployer\nhostKeyPath: /opt/deployer/host_rsa_key\n" > /opt/deployer/config.yaml && \
     chown deployer-server:deployer-server /opt/deployer/config.yaml
 
 # Authorized SSH keys

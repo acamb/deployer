@@ -223,7 +223,6 @@ ssh -p 7676 deployer@localhost
 - **hostKeyPath**: SSH host key path (default: /opt/deployer/host_rsa_key)
 - **ekvs_bin**: path to the `ekvs` CLI binary (optional; defaults to `ekvs` from PATH)
 - **continuity_bin**: path to the `continuity` CLI binary (optional; defaults to `continuity` from PATH). See [Continuity Integration](#continuity-integration)
-- **continuity_advertise_base**: base URL, scheme included and without port (e.g. `http://10.0.0.5`), under which deployed containers are reachable by Continuity. When empty the server falls back to `http://` + hostname (optional)
 
 **⚠️ Security Requirements:**
 - `authorized_keys` file permissions: `600` (read/write owner only)
@@ -345,7 +344,7 @@ image_name: myapp:latest
 - **continuity_internal_port**: container port to publish as a backend, 1–65535 (required when `continuity_enable`)
 - **continuity_health_check_path**: health check path, must start with `/` (optional; Continuity defaults to `/health`)
 - **continuity_remove_previous**: remove the previous backend after registering the new one (optional, default: false)
-- **continuity_advertise_base**: per-project override of the server's `continuity_advertise_base` (optional)
+- **continuity_advertise_base**: base URL, scheme included and without port or path (e.g. `http://10.0.0.5`), under which the container is reachable by Continuity (required when `continuity_enable`)
 - **continuity_private_key**: path to the Continuity auth key managed by deployer (optional; see [Continuity Integration](#continuity-integration))
 
 ### 4. Build Client (if needed)
@@ -538,7 +537,7 @@ continuity_pool: 'myapp.example.com'
 continuity_health_check_path: '/health'
 continuity_internal_port: '8080'
 continuity_remove_previous: true
-# continuity_advertise_base: 'http://10.0.0.5'      # optional, overrides the server default
+continuity_advertise_base: 'http://10.0.0.5'        # required: base URL (scheme, no port/path)
 # continuity_private_key: '~/.ssh/continuity_key'   # optional, see below
 ```
 
@@ -560,11 +559,11 @@ two mutually exclusive paths:
 ### Advertise address
 
 The backend address registered on Continuity is
-`<advertise_base>:<published_docker_port>`. The base is resolved, in order:
-
-1. `continuity_advertise_base` from the client config (per project);
-2. `continuity_advertise_base` from the server config;
-3. `http://` + the server hostname.
+`<advertise_base>:<published_docker_port>`. The base comes solely from
+`continuity_advertise_base` in the client (per-project) config and is
+**required** when `continuity_enable` is true: a single deployer instance can
+serve projects registered on different load balancers and reachable on
+different networks, so the server has no default of its own.
 
 The base must include the scheme and must not carry a port or path
 (the published Docker port is appended automatically).

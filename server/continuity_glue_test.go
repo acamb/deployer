@@ -145,37 +145,19 @@ func continuityRequest(name string) protocol.Request {
 func TestResolveAdvertiseBase(t *testing.T) {
 	setupTestEnvironment(t)
 
-	hostname, err := os.Hostname()
-	require.NoError(t, err)
-
-	t.Run("The client override wins", func(t *testing.T) {
-		config.ContinuityAdvertiseBase = "http://from-server-config"
+	t.Run("The client value is used", func(t *testing.T) {
 		base, err := resolveAdvertiseBase("https://10.0.0.5")
 		require.NoError(t, err)
 		assert.Equal(t, "https://10.0.0.5", base)
 	})
 
-	t.Run("The server configuration is the second choice", func(t *testing.T) {
-		config.ContinuityAdvertiseBase = "http://10.0.0.9"
-		base, err := resolveAdvertiseBase("")
-		require.NoError(t, err)
-		assert.Equal(t, "http://10.0.0.9", base)
-	})
-
-	t.Run("The hostname is the last resort", func(t *testing.T) {
-		config.ContinuityAdvertiseBase = ""
-		base, err := resolveAdvertiseBase("   ")
-		require.NoError(t, err)
-		assert.Equal(t, "http://"+hostname, base)
+	t.Run("An empty value is an error: there is no server-side default", func(t *testing.T) {
+		_, err := resolveAdvertiseBase("   ")
+		require.Error(t, err)
 	})
 
 	t.Run("A trailing slash never reaches the address", func(t *testing.T) {
-		config.ContinuityAdvertiseBase = "http://10.0.0.9/"
-		base, err := resolveAdvertiseBase("")
-		require.NoError(t, err)
-		assert.Equal(t, "http://10.0.0.9", base)
-
-		base, err = resolveAdvertiseBase("http://10.0.0.5/")
+		base, err := resolveAdvertiseBase("http://10.0.0.5/")
 		require.NoError(t, err)
 		assert.Equal(t, "http://10.0.0.5", base)
 	})

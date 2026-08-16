@@ -345,27 +345,18 @@ func backendAddress(state *continuity.State, container string) (string, error) {
 	return base + ":" + port, nil
 }
 
-// resolveAdvertiseBase returns the base URL to publish, scheme included: the
-// per-project override wins over the server configuration, which wins over the
-// hostname of the server. ListenAddress is deliberately not a candidate: it is
-// 0.0.0.0 by default, useless as the address of a backend.
-func resolveAdvertiseBase(override string) (string, error) {
-	if base := strings.TrimSpace(override); base != "" {
-		return strings.TrimSuffix(base, "/"), nil
+// resolveAdvertiseBase returns the base URL to publish, scheme included. The
+// advertise base is a per-project property supplied by the client (a single
+// deployer instance may serve projects registered on different load balancers),
+// so there is no server-side default: an empty value is an error. A validating
+// client never sends an empty value; this guards against stale state or a
+// non-conforming client.
+func resolveAdvertiseBase(base string) (string, error) {
+	base = strings.TrimSpace(base)
+	if base == "" {
+		return "", errors.New("cannot resolve the continuity advertise base: no continuity_advertise_base was provided by the client")
 	}
-	if config != nil {
-		if base := strings.TrimSpace(config.ContinuityAdvertiseBase); base != "" {
-			return strings.TrimSuffix(base, "/"), nil
-		}
-	}
-	hostname, err := os.Hostname()
-	if err != nil {
-		return "", errors.New("cannot resolve the continuity advertise base: " + err.Error())
-	}
-	if strings.TrimSpace(hostname) == "" {
-		return "", errors.New("cannot resolve the continuity advertise base: the hostname is empty")
-	}
-	return "http://" + hostname, nil
+	return strings.TrimSuffix(base, "/"), nil
 }
 
 // containerName returns the name Docker gave the container, which carries the

@@ -347,10 +347,11 @@ func TestValidateContinuity(t *testing.T) {
 	// inside the forwarded file already points at the server's filesystem.
 	baseConfig := func() *Configuration {
 		return &Configuration{
-			ContinuityEnable:       true,
-			ContinuityConfig:       valid,
-			ContinuityInternalPort: "8080",
-			ContinuityPool:         "mypool",
+			ContinuityEnable:        true,
+			ContinuityConfig:        valid,
+			ContinuityInternalPort:  "8080",
+			ContinuityPool:          "mypool",
+			ContinuityAdvertiseBase: "http://10.0.0.5",
 		}
 	}
 
@@ -381,6 +382,8 @@ func TestValidateContinuity(t *testing.T) {
 		{"HealthCheckPathWithoutSlash", func(c *Configuration) { c.ContinuityHealthCheckPath = "health" },
 			"must start with '/'"},
 		{"HealthCheckPathEmptyIsAllowed", func(c *Configuration) { c.ContinuityHealthCheckPath = "" }, ""},
+		{"AdvertiseBaseMissing", func(c *Configuration) { c.ContinuityAdvertiseBase = "" },
+			"continuity_advertise_base is not set"},
 		{"AdvertiseBaseWithoutScheme", func(c *Configuration) { c.ContinuityAdvertiseBase = "10.0.0.5" },
 			"must start with http:// or https://"},
 		{"AdvertiseBaseWithPort", func(c *Configuration) { c.ContinuityAdvertiseBase = "http://10.0.0.5:80" },
@@ -535,6 +538,7 @@ continuity_config: "~/` + filepath.Base(continuityFile.Name()) + `"
 continuity_private_key: "~/` + filepath.Base(keyFile.Name()) + `"
 continuity_pool: "mypool"
 continuity_internal_port: "8080"
+continuity_advertise_base: "http://10.0.0.5"
 `
 	path := writeTempConfig(t, yamlContent)
 	defer os.Remove(path)

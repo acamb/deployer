@@ -54,10 +54,10 @@ type Configuration struct {
 	// EkvsPrivateKey): when left empty, it means the auth_key referenced
 	// inside ContinuityConfig already points to a key present on the
 	// server, placed there manually by an administrator.
-	// ContinuityAdvertiseBase optionally overrides the deployer server's
-	// own continuity_advertise_base for this project: the base URL, scheme
-	// included and without port, under which the container is reachable by
-	// Continuity. The published Docker port is appended to it.
+	// ContinuityAdvertiseBase is required when ContinuityEnable is true: the
+	// base URL, scheme included and without port, under which the container
+	// is reachable by Continuity. It is a per-project property with no
+	// server-side default. The published Docker port is appended to it.
 	ContinuityEnable          bool   `yaml:"continuity_enable"`
 	ContinuityConfig          string `yaml:"continuity_config"`
 	ContinuityPrivateKey      string `yaml:"continuity_private_key"`
@@ -220,15 +220,16 @@ func validateContinuity(config *Configuration) error {
 	return checkReadableFile(config.ContinuityPrivateKey, "continuity_private_key")
 }
 
-// validateAdvertiseBase normalizes and validates ContinuityAdvertiseBase: it
-// must be a bare origin, because the server appends ":<published-port>" to it
-// to build the backend address. A trailing slash is trimmed rather than
-// rejected.
+// validateAdvertiseBase normalizes and validates ContinuityAdvertiseBase: it is
+// required (the advertise base is a per-project property with no server-side
+// default) and must be a bare origin, because the server appends
+// ":<published-port>" to it to build the backend address. A trailing slash is
+// trimmed rather than rejected.
 func validateAdvertiseBase(config *Configuration) error {
 	base := strings.TrimRight(strings.TrimSpace(config.ContinuityAdvertiseBase), "/")
 	config.ContinuityAdvertiseBase = base
 	if base == "" {
-		return nil
+		return fmt.Errorf("continuity_enable is true but continuity_advertise_base is not set")
 	}
 	parsed, err := url.Parse(base)
 	if err != nil {
@@ -417,10 +418,10 @@ image_name: myapp:latest
 ##   forwarded continuity_config to point at it;
 ## - if left empty, auth_key in continuity_config is assumed to already
 ##   point to a key present on the server, placed there manually.
-##continuity_advertise_base overrides, for this project only, the server's
-##own continuity_advertise_base: the base URL under which the container is
-##reachable by continuity. Scheme included, no port and no path — the
-##published container port is appended by the server.
+##continuity_advertise_base is required when continuity_enable is true: the
+##base URL under which the container is reachable by continuity. Scheme
+##included, no port and no path — the published container port is appended by
+##the server.
 #continuity_enable: false
 #continuity_config: './continuity-client.yaml'
 #continuity_private_key: '~/.ssh/continuity_key'
