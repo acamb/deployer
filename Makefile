@@ -8,6 +8,13 @@ DEBNAME_CLIENT := $(BINDIR)/deployer-client_$(VERSION)_amd64.deb
 RPMNAME := $(BINDIR)/deployer-server-$(VERSION)-1.x86_64.rpm
 RPMNAME_CLIENT := $(BINDIR)/deployer-client-$(VERSION)-1.x86_64.rpm
 
+# Git Bash/MSYS automatic path conversion workaround
+ifeq ($(OS),Windows_NT)
+    DOCKER := MSYS_NO_PATHCONV=1 docker
+else
+    DOCKER := docker
+endif
+
 all: server client
 
 server:
@@ -98,7 +105,7 @@ rpm:
 	cd $(PKGDIR)-rpm && rpmbuild --define "_topdir $(PWD)/$(PKGDIR)-rpm" --define "_rpmdir $(PWD)/$(BINDIR)" -bb SPECS/deployer-server.spec
 
 docker-server-deb-container:
-	docker run --rm -v $(PWD):/workspace -w /workspace debian:bookworm bash -c "\
+	$(DOCKER) run --rm -v "$(CURDIR):/workspace" -w /workspace debian:bookworm bash -c "\
 	apt-get update && \
 	apt-get install -y ca-certificates make dpkg-dev && \
 	make deb && \
@@ -137,7 +144,7 @@ client-rpm:
 	cd $(PKGDIR)-client-rpm && rpmbuild --define "_topdir $(PWD)/$(PKGDIR)-client-rpm" --define "_rpmdir $(PWD)/$(BINDIR)" -bb SPECS/deployer-client.spec
 
 docker-client-deb-container:
-	docker run --rm -v $(PWD):/workspace -w /workspace debian:bookworm bash -c "\
+	$(DOCKER) run --rm -v "$(CURDIR):/workspace" -w /workspace debian:bookworm bash -c "\
 	apt-get update && \
 	apt-get install -y ca-certificates make dpkg-dev && \
 	make client-deb && \
@@ -148,7 +155,7 @@ docker-client-deb: client
 	make docker-client-deb-container
 
 docker-server-rpm-container:
-	docker run --rm -v $(PWD):/workspace -w /workspace rockylinux:9 bash -c "\
+	$(DOCKER) run --rm -v "$(CURDIR):/workspace" -w /workspace rockylinux:9 bash -c "\
 	yum update -y && \
 	yum install -y ca-certificates make rpm-build && \
 	make rpm && \
@@ -159,7 +166,7 @@ docker-server-rpm: server
 	make docker-server-rpm-container
 
 docker-client-rpm-container:
-	docker run --rm -v $(PWD):/workspace -w /workspace rockylinux:9 bash -c "\
+	$(DOCKER) run --rm -v "$(CURDIR):/workspace" -w /workspace rockylinux:9 bash -c "\
 	yum update -y && \
 	yum install -y ca-certificates make rpm-build && \
 	make client-rpm && \
