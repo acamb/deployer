@@ -242,6 +242,28 @@ func TestRequestGobEncoding_WithEkvsFields(t *testing.T) {
 	assert.Equal(t, original.EkvsPrivateKey, decoded.EkvsPrivateKey)
 }
 
+func TestRequestGobEncoding_WithEkvsFiles(t *testing.T) {
+	original := Request{
+		Command:     Deploy,
+		Name:        "ekvs-app",
+		EkvsEnable:  true,
+		EkvsServer:  "https://ekvs.example.com",
+		EkvsProject: "myproj",
+		EkvsFiles: []EkvsFile{
+			{Secret: "app_config_json", MountPath: "/app/config.json", ReadOnly: true},
+			{Secret: "tls_key", MountPath: "/etc/app/tls.key", ReadOnly: false},
+		},
+	}
+
+	var buf bytes.Buffer
+	require.NoError(t, gob.NewEncoder(&buf).Encode(&original))
+
+	var decoded Request
+	require.NoError(t, gob.NewDecoder(&buf).Decode(&decoded))
+
+	assert.Equal(t, original.EkvsFiles, decoded.EkvsFiles)
+}
+
 func TestLbStatusResponseJSONRoundTrip(t *testing.T) {
 	original := LbStatusResponse{
 		Hostname: "my-app.example.com",

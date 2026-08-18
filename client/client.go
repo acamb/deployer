@@ -271,6 +271,13 @@ func handleRequest(name string,
 		request.EkvsServer = currentConfig.EkvsServer
 		request.EkvsProject = currentConfig.EkvsProject
 		request.EkvsPrivateKey = keyBytes
+		for _, f := range currentConfig.EkvsFiles {
+			request.EkvsFiles = append(request.EkvsFiles, protocol.EkvsFile{
+				Secret:    f.Secret,
+				MountPath: f.MountPath,
+				ReadOnly:  !f.Writable,
+			})
+		}
 	}
 
 	// Populate Continuity fields for commands that will start a container.

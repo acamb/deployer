@@ -480,6 +480,41 @@ services:
       - API_TOKEN
 ```
 
+### Secrets as files (`ekvs_files`)
+Some applications read their secrets from a **file** at startup (for example a
+`config.json` whose entire content is sensitive) rather than from environment
+variables. Deployer can materialize EKVS secrets as files and bind-mount them
+into the container automatically.
+
+Each entry maps **one EKVS secret** — whose value is the **entire file
+content** — to an absolute path inside the container:
+
+```yaml
+ekvs_enable: true
+ekvs_server: https://ekvs.example.com
+ekvs_project: myapp
+ekvs_private_key: /path/to/ekvs_private_key
+
+ekvs_files:
+  - secret: app_config_json      # the secret value is the whole config.json
+    mount_path: /app/config.json # where to mount it inside the container
+  - secret: tls_key
+    mount_path: /etc/app/tls.key
+    writable: false              # optional; files are read-only by default
+```
+
+For each entry, the server runs
+`ekvs --server ... --identity ... export <project> <secret> --output <path>`,
+writing the file (mode `0600`) under `<working-dir>/.ekvs-secrets/`, and
+injects the matching bind mount into the service named like `name` in your
+compose file. You do **not** need to declare these volumes yourself — but the
+compose file must contain a service whose name matches `name` (the same
+requirement as revisions).
+
+The files are (re)written on every `deploy`, `start` and `restart`, so their
+contents stay in sync with EKVS. `ekvs_files` requires `ekvs_enable: true` and
+can be combined with the environment-variable injection described above.
+
 ### Security notes
 - The private key is transmitted over the SSH channel between client and
   server, which is already encrypted; nevertheless it is transmitted on
@@ -489,6 +524,12 @@ services:
   underlying command panics.
 - Errors reported by `ekvs` (including EKVS server URLs) are forwarded to
   the client verbatim.
+- Unlike environment-variable injection, which is ephemeral, files
+  materialized via `ekvs_files` remain on the server's disk (mode `0600`,
+  under `<working-dir>/.ekvs-secrets/`) for the container's lifetime, because
+  they are the bind-mount sources. They are removed when the project's files
+  are deleted (`stop` with file deletion). This is an inherent trade-off of
+  mounting a secret as a file.
 
 ## Continuity Integration
 

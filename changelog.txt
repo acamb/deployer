@@ -36,6 +36,13 @@
         - Continuity authentication is optional: if continuity_private_key is unset and
           continuity_config has no 'auth_key', the integration is used without authentication.
      - New 'lb-status' command to show the Continuity pool a project is published on.
+
     Added 'revisions_remove_previous' client config: after a successful --new-revision deploy,
     stop the revision(s) that were running before. If more than one is running you are prompted
     which to stop; if exactly one, it is stopped automatically.
+
+    EKVS integration can now materialize secrets as files mounted into the container,
+    in addition to environment-variable injection.
+     - New client config 'ekvs_files': a list of {secret, mount_path, writable} entries.
+       Each entry maps one EKVS secret (whose value is the whole file content) to an
+       absolute path inside the container.

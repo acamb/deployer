@@ -1999,3 +1999,127 @@ func TestStartContainer_EkvsCommandNotFound(t *testing.T) {
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "Error starting container")
 }
+
+func TestMaterializeEkvsFiles_PreservesRequestKey(t *testing.T) {
+	setupTestEnvironment(t)
+	containerName := "ekvs-key-preserve"
+	require.NoError(t, os.MkdirAll(config.WorkingDirectory+"/"+containerName, 0770))
+
+	// Point EkvsBin to a nonexistent binary so the export fails, but the key
+	// handling around it still runs (including the deferred cleanup).
+	config.EkvsBin = filepath.Join(t.TempDir(), "nonexistent-ekvs")
+	defer func() { config.EkvsBin = "" }()
+
+	key := []byte("-----BEGIN PRIVATE KEY-----\nabc\n-----END PRIVATE KEY-----")
+	original := append([]byte(nil), key...)
+	req := protocol.Request{
+		Name:           containerName,
+		EkvsEnable:     true,
+		EkvsServer:     "https://ekvs.example.com",
+		EkvsProject:    "myproj",
+		EkvsPrivateKey: key,
+		EkvsFiles: []protocol.EkvsFile{
+			{Secret: "app_config_json", MountPath: "/app/config.json", ReadOnly: true},
+		},
+	}
+
+	// The export itself fails (no binary), but the crucial invariant is that
+	// request.EkvsPrivateKey must NOT be zeroed: buildStartCommand reuses it
+	// right after for the env-injection `exec` path.
+	err := materializeEkvsFiles(req)
+	require.Error(t, err)
+	assert.Equal(t, original, req.EkvsPrivateKey, "request key must survive materializeEkvsFiles for the subsequent exec call")
+}
+
+func TestEkvsSafeName(t *testing.T) {
+	tests := []struct {
+		in   string
+		want string
+	}{
+		{"app_config_json", "app_config_json"},
+		{"config.json", "config.json"},
+		{"my-secret", "my-secret"},
+		{"weird/name with spaces", "weird_name_with_spaces"},
+		{"a/../b", "a_.._b"},
+		{"..", "_.."},
+		{".", "_."},
+		{"", "_"},
+	}
+	for _, tt := range tests {
+		assert.Equal(t, tt.want, ekvsSafeName(tt.in), "ekvsSafeName(%q)", tt.in)
+	}
+}
+
+func TestEkvsSecretPaths(t *testing.T) {
+	assert.Equal(t, "./.ekvs-secrets/config.json", ekvsSecretComposePath("config.json"))
+	assert.Equal(t,
+		filepath.Join("/work/myapp", ".ekvs-secrets", "config.json"),
+		ekvsSecretHostPath("/work/myapp", "config.json"))
+	// A traversal attempt in the secret name never escapes the secrets dir.
+	assert.Equal(t,
+		filepath.Join("/work/myapp", ".ekvs-secrets", "_.."),
+		ekvsSecretHostPath("/work/myapp", ".."))
+}
+
+func TestSaveComposeFile_EkvsFilesInjectVolumes(t *testing.T) {
+	setupTestEnvironment(t)
+	containerName := "ekvs-vol-app"
+	require.NoError(t, os.MkdirAll(config.WorkingDirectory+"/"+containerName, 0770))
+
+	request := protocol.Request{
+		Name: containerName,
+		EkvsFiles: []protocol.EkvsFile{
+			{Secret: "app_config_json", MountPath: "/app/config.json", ReadOnly: true},
+			{Secret: "tls_key", MountPath: "/etc/app/tls.key", ReadOnly: false},
+		},
+	}
+	content := "services:\n  " + containerName + ":\n    image: nginx\n"
+	require.NoError(t, saveComposeFile(request, content))
+
+	saved, err := os.ReadFile(config.WorkingDirectory + "/" + containerName + "/docker-compose.yml")
+	require.NoError(t, err)
+	savedStr := string(saved)
+	assert.Contains(t, savedStr, "./.ekvs-secrets/app_config_json:/app/config.json:ro")
+	assert.Contains(t, savedStr, "./.ekvs-secrets/tls_key:/etc/app/tls.key")
+	// The writable entry must NOT carry the :ro suffix.
+	assert.NotContains(t, savedStr, "/etc/app/tls.key:ro")
+}
+
+func TestSaveComposeFile_EkvsFilesPreserveExistingVolumes(t *testing.T) {
+	setupTestEnvironment(t)
+	containerName := "ekvs-vol-keep"
+	require.NoError(t, os.MkdirAll(config.WorkingDirectory+"/"+containerName, 0770))
+
+	request := protocol.Request{
+		Name: containerName,
+		EkvsFiles: []protocol.EkvsFile{
+			{Secret: "app_config_json", MountPath: "/app/config.json", ReadOnly: true},
+		},
+	}
+	content := "services:\n  " + containerName + ":\n    image: nginx\n    volumes:\n      - ./data:/data\n"
+	require.NoError(t, saveComposeFile(request, content))
+
+	saved, err := os.ReadFile(config.WorkingDirectory + "/" + containerName + "/docker-compose.yml")
+	require.NoError(t, err)
+	savedStr := string(saved)
+	assert.Contains(t, savedStr, "./data:/data")
+	assert.Contains(t, savedStr, "./.ekvs-secrets/app_config_json:/app/config.json:ro")
+}
+
+func TestSaveComposeFile_EkvsFilesServiceMissing(t *testing.T) {
+	setupTestEnvironment(t)
+	containerName := "ekvs-vol-missing"
+	require.NoError(t, os.MkdirAll(config.WorkingDirectory+"/"+containerName, 0770))
+
+	request := protocol.Request{
+		Name: containerName,
+		EkvsFiles: []protocol.EkvsFile{
+			{Secret: "app_config_json", MountPath: "/app/config.json", ReadOnly: true},
+		},
+	}
+	// The compose file declares a differently-named service.
+	content := "services:\n  other-service:\n    image: nginx\n"
+	err := saveComposeFile(request, content)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "This is required to mount EKVS secret files")
+}

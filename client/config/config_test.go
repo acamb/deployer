@@ -189,6 +189,112 @@ ekvs_enable: false
 	}
 }
 
+func TestReadConfiguration_EkvsFilesParsed(t *testing.T) {
+	tmpKey, err := os.CreateTemp("", "ekvs-key-*")
+	if err != nil {
+		t.Fatalf("cannot create temp key: %v", err)
+	}
+	_, _ = tmpKey.WriteString("dummy-key")
+	_ = tmpKey.Close()
+	defer os.Remove(tmpKey.Name())
+
+	yamlContent := `
+name: "ekvs-app"
+ekvs_enable: true
+ekvs_server: "https://ekvs.example.com"
+ekvs_project: "proj"
+ekvs_private_key: "` + filepath.ToSlash(tmpKey.Name()) + `"
+ekvs_files:
+  - secret: app_config_json
+    mount_path: /app/config.json
+  - secret: tls_key
+    mount_path: /etc/app/tls.key
+    writable: true
+`
+	path := writeTempConfig(t, yamlContent)
+	defer os.Remove(path)
+
+	cfg, err := ReadConfiguration(path)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(cfg.EkvsFiles) != 2 {
+		t.Fatalf("expected 2 ekvs_files, got %d", len(cfg.EkvsFiles))
+	}
+	if cfg.EkvsFiles[0].Secret != "app_config_json" || cfg.EkvsFiles[0].MountPath != "/app/config.json" || cfg.EkvsFiles[0].Writable {
+		t.Errorf("first ekvs_files entry parsed incorrectly: %+v", cfg.EkvsFiles[0])
+	}
+	if cfg.EkvsFiles[1].Secret != "tls_key" || !cfg.EkvsFiles[1].Writable {
+		t.Errorf("second ekvs_files entry parsed incorrectly: %+v", cfg.EkvsFiles[1])
+	}
+}
+
+func TestReadConfiguration_EkvsFilesRequireEnable(t *testing.T) {
+	yamlContent := `
+name: "ekvs-app"
+ekvs_enable: false
+ekvs_files:
+  - secret: app_config_json
+    mount_path: /app/config.json
+`
+	path := writeTempConfig(t, yamlContent)
+	defer os.Remove(path)
+
+	_, err := ReadConfiguration(path)
+	if err == nil {
+		t.Fatal("Expecting error: ekvs_files set but ekvs_enable is false")
+	}
+}
+
+func TestReadConfiguration_EkvsFilesMissingSecret(t *testing.T) {
+	tmpKey, _ := os.CreateTemp("", "ekvs-key-*")
+	_, _ = tmpKey.WriteString("dummy-key")
+	_ = tmpKey.Close()
+	defer os.Remove(tmpKey.Name())
+
+	yamlContent := `
+name: "ekvs-app"
+ekvs_enable: true
+ekvs_server: "https://ekvs.example.com"
+ekvs_project: "proj"
+ekvs_private_key: "` + filepath.ToSlash(tmpKey.Name()) + `"
+ekvs_files:
+  - mount_path: /app/config.json
+`
+	path := writeTempConfig(t, yamlContent)
+	defer os.Remove(path)
+
+	_, err := ReadConfiguration(path)
+	if err == nil {
+		t.Fatal("Expecting error for ekvs_files entry with empty secret")
+	}
+}
+
+func TestReadConfiguration_EkvsFilesRelativeMountPath(t *testing.T) {
+	tmpKey, _ := os.CreateTemp("", "ekvs-key-*")
+	_, _ = tmpKey.WriteString("dummy-key")
+	_ = tmpKey.Close()
+	defer os.Remove(tmpKey.Name())
+
+	yamlContent := `
+name: "ekvs-app"
+ekvs_enable: true
+ekvs_server: "https://ekvs.example.com"
+ekvs_project: "proj"
+ekvs_private_key: "` + filepath.ToSlash(tmpKey.Name()) + `"
+ekvs_files:
+  - secret: app_config_json
+    mount_path: relative/config.json
+`
+	path := writeTempConfig(t, yamlContent)
+	defer os.Remove(path)
+
+	_, err := ReadConfiguration(path)
+	if err == nil {
+		t.Fatal("Expecting error for non-absolute mount_path")
+	}
+}
+
 func TestExpandHome(t *testing.T) {
 	home, err := os.UserHomeDir()
 	if err != nil {

@@ -34,6 +34,17 @@ func (b *BuildMethod) UnmarshalYAML(unmarshal func(interface{}) error) error {
 	}
 }
 
+// EkvsFile declares an EKVS secret to be materialized as a file on the server
+// and bind-mounted into the container. Secret is the EKVS secret name whose
+// value becomes the entire file content; MountPath is the absolute path inside
+// the container where the file is mounted; Writable, when true, makes the bind
+// mount writable (by default secret files are mounted read-only).
+type EkvsFile struct {
+	Secret    string `yaml:"secret"`
+	MountPath string `yaml:"mount_path"`
+	Writable  bool   `yaml:"writable"`
+}
+
 type Configuration struct {
 	Host                    string      `yaml:"host"`
 	Port                    int         `yaml:"port"`
@@ -45,10 +56,11 @@ type Configuration struct {
 	EnableRevisions         bool        `yaml:"enable_revisions"`
 	RevisionsRemovePrevious bool        `yaml:"revisions_remove_previous"`
 
-	EkvsEnable     bool   `yaml:"ekvs_enable"`
-	EkvsServer     string `yaml:"ekvs_server"`
-	EkvsProject    string `yaml:"ekvs_project"`
-	EkvsPrivateKey string `yaml:"ekvs_private_key"`
+	EkvsEnable     bool       `yaml:"ekvs_enable"`
+	EkvsServer     string     `yaml:"ekvs_server"`
+	EkvsProject    string     `yaml:"ekvs_project"`
+	EkvsPrivateKey string     `yaml:"ekvs_private_key"`
+	EkvsFiles      []EkvsFile `yaml:"ekvs_files"`
 
 	// ContinuityPrivateKey is fully optional and has no fallback (unlike
 	// EkvsPrivateKey): when left empty, it means the auth_key referenced
@@ -149,7 +161,13 @@ func ReadConfiguration(filePath string) (*Configuration, error) {
 
 func validateEkvs(config *Configuration) error {
 	if !config.EkvsEnable {
+		if len(config.EkvsFiles) > 0 {
+			return fmt.Errorf("ekvs_files is set but ekvs_enable is false")
+		}
 		return nil
+	}
+	if err := validateEkvsFiles(config.EkvsFiles); err != nil {
+		return err
 	}
 	if strings.TrimSpace(config.EkvsServer) == "" {
 		return fmt.Errorf("ekvs_enable is true but ekvs_server is not set")
@@ -171,6 +189,26 @@ func validateEkvs(config *Configuration) error {
 		}
 	}
 	return checkReadableFile(config.EkvsPrivateKey, "ekvs_private_key")
+}
+
+// validateEkvsFiles checks each declared EKVS secret-file mapping. The secret
+// name must be present and the mount path must be an absolute path inside the
+// container. mount_path is validated with isServerAbsPath because it targets
+// the container filesystem (POSIX) even when the client runs on Windows.
+func validateEkvsFiles(files []EkvsFile) error {
+	for i, f := range files {
+		if strings.TrimSpace(f.Secret) == "" {
+			return fmt.Errorf("ekvs_files[%d]: secret is required", i)
+		}
+		mountPath := strings.TrimSpace(f.MountPath)
+		if mountPath == "" {
+			return fmt.Errorf("ekvs_files[%d] (secret %q): mount_path is required", i, f.Secret)
+		}
+		if strings.HasPrefix(mountPath, "~") || !isServerAbsPath(mountPath) {
+			return fmt.Errorf("ekvs_files[%d] (secret %q): mount_path %q must be an absolute path inside the container", i, f.Secret, f.MountPath)
+		}
+	}
+	return nil
 }
 
 // validateContinuity validates the Continuity integration fields. Unlike
@@ -406,6 +444,19 @@ image_name: myapp:latest
 #ekvs_server: 'https://ekvs.example.com'
 #ekvs_project: 'my-project'
 #ekvs_private_key: '~/.ssh/ekvs_key'
+##ekvs_files (optional): materialize EKVS secrets as files and bind-mount them
+##into the container. Each entry maps one secret (whose value is the entire file
+##content) to an absolute path inside the container. The server fetches them and
+##injects the bind mount into the compose file automatically. Files are mounted
+##read-only unless 'writable: true'. Requires ekvs_enable: true. Note that the
+##materialized files remain on the server's disk (mode 0600) for the container's
+##lifetime, unlike environment-variable injection which is ephemeral.
+#ekvs_files:
+#  - secret: app_config_json
+#    mount_path: /app/config.json
+#  - secret: tls_key
+#    mount_path: /etc/app/tls.key
+#    writable: false
 ##Continuity integration (optional): register the deployed container as a
 ##backend on a Continuity load balancer pool. When continuity_enable is
 ##true, continuity_config and continuity_internal_port are required.

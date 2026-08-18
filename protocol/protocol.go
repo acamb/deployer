@@ -78,6 +78,13 @@ type Request struct {
 	EkvsServer     string
 	EkvsProject    string
 	EkvsPrivateKey []byte
+	// EkvsFiles lists EKVS secrets to materialize as files on the server and
+	// bind-mount into the container. Each entry maps a single secret (whose
+	// value is the whole file content) to a target path inside the container.
+	// The server fetches them with `ekvs ... print <project> <secret>
+	// --output <hostPath>` and auto-injects the corresponding bind mount into
+	// the compose file. Populated only when EkvsEnable is true.
+	EkvsFiles []EkvsFile
 	// Continuity integration: these fields are optional and are populated
 	// only when the client has Continuity enabled (see client/config).
 	// They accompany requests that start a container (Deploy, Start,
@@ -99,6 +106,17 @@ type Request struct {
 	ContinuityInternalPort    string
 	ContinuityRemovePrevious  bool
 	ContinuityAdvertiseBase   string
+}
+
+// EkvsFile describes one EKVS secret to be materialized as a file on the
+// server and bind-mounted into the container. Secret is the EKVS secret name
+// whose value becomes the file content; MountPath is the absolute path inside
+// the container where the file is mounted; ReadOnly requests a read-only
+// (":ro") bind mount.
+type EkvsFile struct {
+	Secret    string
+	MountPath string
+	ReadOnly  bool
 }
 
 func (r Request) String() string {

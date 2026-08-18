@@ -546,6 +546,12 @@ func saveComposeFile(request protocol.Request, fileContent string) error {
 		}
 	}
 
+	if len(request.EkvsFiles) > 0 {
+		if err := injectEkvsVolumes(doc, request); err != nil {
+			return err
+		}
+	}
+
 	out, err := yaml.Marshal(doc)
 	if err != nil {
 		return fmt.Errorf("Error serializing compose file: %v", err)
@@ -640,6 +646,9 @@ func startContainer(request protocol.Request) error {
 	if TestingMode {
 		return nil
 	}
+	if err := materializeEkvsFiles(request); err != nil {
+		return err
+	}
 	cmdName, cmdArgs, cleanup, err := buildStartCommand(request)
 	if err != nil {
 		return err
@@ -673,10 +682,7 @@ func buildStartCommand(request protocol.Request) (string, []string, func(), erro
 	if strings.TrimSpace(request.EkvsProject) == "" {
 		return "", nil, nil, errors.New("EKVS is enabled but no project was provided")
 	}
-	ekvsBin := "ekvs"
-	if config != nil && strings.TrimSpace(config.EkvsBin) != "" {
-		ekvsBin = config.EkvsBin
-	}
+	ekvsBin := ekvsBinary()
 	keyPath, cleanup, err := writeEphemeralPrivateKey(request.EkvsPrivateKey)
 	if err != nil {
 		return "", nil, nil, err
@@ -724,6 +730,139 @@ func writeEphemeralPrivateKey(key []byte) (string, func(), error) {
 		}
 	}
 	return path, cleanup, nil
+}
+
+// ekvsSecretsDir is the directory, relative to a project's working directory,
+// where EKVS secrets are materialized as files before being bind-mounted.
+const ekvsSecretsDir = ".ekvs-secrets"
+
+// ekvsBinary returns the ekvs executable to use, honoring the server config
+// override (EkvsBin) and falling back to "ekvs" resolved from PATH.
+func ekvsBinary() string {
+	if config != nil && strings.TrimSpace(config.EkvsBin) != "" {
+		return config.EkvsBin
+	}
+	return "ekvs"
+}
+
+// ekvsSafeName sanitizes an EKVS secret name into a filesystem-safe file name,
+// replacing any character outside [A-Za-z0-9._-] with '_'. Bare "." and ".."
+// are prefixed so a secret name can never resolve to a path-traversal segment.
+func ekvsSafeName(secret string) string {
+	var b strings.Builder
+	for _, r := range secret {
+		switch {
+		case r >= 'a' && r <= 'z', r >= 'A' && r <= 'Z', r >= '0' && r <= '9',
+			r == '.', r == '_', r == '-':
+			b.WriteRune(r)
+		default:
+			b.WriteRune('_')
+		}
+	}
+	name := b.String()
+	if name == "" || name == "." || name == ".." {
+		name = "_" + name
+	}
+	return name
+}
+
+// ekvsSecretComposePath returns the bind-mount source path for a secret,
+// relative to the compose working directory (where `docker compose` runs).
+func ekvsSecretComposePath(secret string) string {
+	return "./" + ekvsSecretsDir + "/" + ekvsSafeName(secret)
+}
+
+// ekvsSecretHostPath returns the absolute path on the server where the given
+// secret is materialized, inside workingDir.
+func ekvsSecretHostPath(workingDir, secret string) string {
+	return filepath.Join(workingDir, ekvsSecretsDir, ekvsSafeName(secret))
+}
+
+// injectEkvsVolumes appends, to the service named request.Name, one bind-mount
+// entry per EKVS secret file, mapping the materialized host file to its target
+// path inside the container. It mirrors the revision-rewriting approach: the
+// service must be present, exactly as revisions already require.
+func injectEkvsVolumes(doc map[string]interface{}, request protocol.Request) error {
+	services, ok := doc["services"].(map[string]interface{})
+	if !ok {
+		return errors.New("Compose file has no services; cannot mount EKVS secret files")
+	}
+	svc, ok := services[request.Name].(map[string]interface{})
+	if !ok {
+		return errors.New("Compose file does not contain service " + request.Name + ". This is required to mount EKVS secret files.")
+	}
+	var volumes []interface{}
+	if existing, ok := svc["volumes"].([]interface{}); ok {
+		volumes = existing
+	}
+	for _, f := range request.EkvsFiles {
+		entry := ekvsSecretComposePath(f.Secret) + ":" + f.MountPath
+		if f.ReadOnly {
+			entry += ":ro"
+		}
+		volumes = append(volumes, entry)
+	}
+	svc["volumes"] = volumes
+	return nil
+}
+
+// materializeEkvsFiles fetches each declared EKVS secret and writes it to a
+// file under <workingDir>/.ekvs-secrets/ so it can be bind-mounted into the
+// container. It must run before `docker compose up` because these files are
+// bind-mount sources, and unlike the ephemeral identity key they must persist
+// for the container's lifetime. Files are (re)written with mode 0600 on every
+// start so their contents stay in sync with EKVS.
+func materializeEkvsFiles(request protocol.Request) error {
+	if !request.EkvsEnable || len(request.EkvsFiles) == 0 {
+		return nil
+	}
+	if len(request.EkvsPrivateKey) == 0 {
+		return errors.New("EKVS files are configured but no private key was provided")
+	}
+	if strings.TrimSpace(request.EkvsServer) == "" {
+		return errors.New("EKVS files are configured but no server was provided")
+	}
+	if strings.TrimSpace(request.EkvsProject) == "" {
+		return errors.New("EKVS files are configured but no project was provided")
+	}
+
+	// Work on a copy of the key: writeEphemeralPrivateKey's cleanup zeroes the
+	// buffer it is given, and request.EkvsPrivateKey is reused right after by
+	// buildStartCommand (the env-injection `exec` path). Zeroing the shared
+	// buffer here would leave that later call with an empty key, making ekvs
+	// fail with "parsing private key PEM: ssh: no key found".
+	keyCopy := append([]byte(nil), request.EkvsPrivateKey...)
+	keyPath, cleanup, err := writeEphemeralPrivateKey(keyCopy)
+	if err != nil {
+		return err
+	}
+	defer cleanup()
+
+	workingDir := getWorkingDirectory(request)
+	if err := os.MkdirAll(filepath.Join(workingDir, ekvsSecretsDir), 0700); err != nil {
+		return errors.New("cannot create EKVS secrets directory: " + err.Error())
+	}
+
+	ekvsBin := ekvsBinary()
+	for _, f := range request.EkvsFiles {
+		hostPath := ekvsSecretHostPath(workingDir, f.Secret)
+		args := []string{
+			"--server", request.EkvsServer,
+			"--identity", keyPath,
+			"export", request.EkvsProject, f.Secret,
+			"--output", hostPath,
+		}
+		cmd := exec.Command(ekvsBin, args...)
+		cmd.Dir = workingDir
+		output, err := cmd.CombinedOutput()
+		if err != nil {
+			return fmt.Errorf("error fetching EKVS secret %q: %v. Output: %s", f.Secret, err, string(output))
+		}
+		if err := os.Chmod(hostPath, 0600); err != nil {
+			return fmt.Errorf("cannot set permissions on EKVS secret file for %q: %v", f.Secret, err)
+		}
+	}
+	return nil
 }
 
 func handleResponse(message string, status protocol.Status, encoder *gob.Encoder) error {

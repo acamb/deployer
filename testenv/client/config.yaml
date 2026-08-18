@@ -13,6 +13,13 @@ revisions_remove_previous: true
 #ekvs_server: http://webapp.local:9000
 #ekvs_project: test
 #ekvs_private_key: ~/.ssh/ekvs
+# Materialize EKVS secrets as files bind-mounted into the container. Each entry
+# maps one secret (whose value is the whole file content) to an absolute path
+# inside the container. Requires ekvs_enable: true. Files are read-only unless
+# 'writable: true'.
+#ekvs_files:
+#  - secret: app_config_json
+#    mount_path: /app/config.json
 continuity_enable: true
 continuity_config: ./continuity-client.yaml
 continuity_pool: test.local
