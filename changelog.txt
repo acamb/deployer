@@ -27,7 +27,7 @@
     Added more test & coverage on server code
 0.7.0 2026/07/25:
     Added EKVS integration to inject secrets into containers.
-0.8.0 2026/08/XX:
+0.8.0 2026/08/18:
     Added Continuity load balancer integration:
      - New server config: continuity_bin (optional for Continuity integration).
      - New client config: continuity_enable, continuity_config, continuity_pool,
